@@ -56,7 +56,7 @@ g_cue_list = [];
 class Cue:
     def __init__(self, i_cue_num, i_dmx_vals,i_up_time, i_down_time):
         self.CUE_NUM = copy.deepcopy(i_cue_num) #do nothing if we're in standby (steady state)
-        self.DMX_VALS = copy.deepcopy(i_dmx_vals)
+        self.DMX_VALS = copy.deepcopy(map(int,i_dmx_vals))
         self.UP_TIME = copy.deepcopy(i_up_time+c_sec_per_frame) #can't actually have zero transition time
         self.DOWN_TIME = copy.deepcopy(i_down_time+c_sec_per_frame) #can't actually have zero transition time
         
@@ -70,39 +70,42 @@ class Cue:
 #the Cue List is a python list. These functions are used to insert or remove cues from the list
 
 def insert_cue(cue_num, dmx_vals,up_time, down_time):
-    print "inserting cue..."
     global g_cur_cue_index
     #case, insert only cue
     if(len(g_cue_list) == 0):
+        print("Inserting cue into empty list")
         g_cue_list.append(Cue(cue_num, dmx_vals,up_time,down_time))
         g_cur_cue_index = 0
     #case, insert first cue
     elif(cue_num < g_cue_list[0].CUE_NUM):
+        print("inserting cue into the first slot in the list")
         g_cue_list.insert(0, Cue(cue_num,dmx_vals,up_time,down_time))
         g_cur_cue_index = 0
     #case, insert last cue
     elif(cue_num > g_cue_list[len(g_cue_list)-1].CUE_NUM):
+        print("Inserting cue into last slot in list")
         g_cue_list.append(Cue(cue_num,dmx_vals,up_time,down_time))
         g_cur_cue_index = len(g_cue_list)-1
     #case, replace last cue
     elif(cue_num == g_cue_list[len(g_cue_list)-1].CUE_NUM):
-        print "overwriting cue!"
+        print("Overwriting last cue in list")
         g_cue_list[len(g_cue_list)-1] = Cue(cue_num,dmx_vals,up_time,down_time)
         g_cur_cue_index = len(g_cue_list)-1
     #case, insert cue in middle of list
     else:
         for i in range(0,len(g_cue_list)-1):
     	    if(cue_num == g_cue_list[i].CUE_NUM):#case, overwrite existing cue
-                print "overwriting cue!"
+                print("Overwriting Cue #" + str(g_cue_list[i].CUE_NUM))
     	        g_cue_list[i] = Cue(cue_num,dmx_vals,up_time,down_time)
                 g_cur_cue_index = i
                 break
-    	    elif(cue_num > g_cue_list[i].CUE_NUM and cue_num < g_cue_list[i+1]):
+    	    elif(cue_num > g_cue_list[i].CUE_NUM and cue_num < g_cue_list[i+1].CUE_NUM):
+                print("Inserting cue after #" + str(g_cue_list[i].CUE_NUM) + " and before #" + str(g_cue_list[i+1].CUE_NUM))
     	        g_cue_list.insert(i+1, Cue(cue_num,dmx_vals,up_time,down_time))
                 g_cur_cue_index = i+1
                 break
-    for i in range(0,len(g_cue_list)-1):
-        print g_cue_list[i]   		   
+    print(len(g_cue_list))
+         		   
  
 def remove_cue(cue_num):
     for i in range(0,len(g_cue_list)): #linearlly traverse list until cue is found
@@ -182,14 +185,8 @@ class Application(Frame):
         global g_cur_cue_index
         global g_sec_into_transition
         if(g_state == c_STATE_STANDBY):
-            g_entered_cue_num = float(self.CUE_NUM_DISP_STR.get())
-            g_entered_up_time = float(self.CUE_TIME_UP_DISP_STR.get())
-            g_entered_down_time = float(self.CUE_TIME_DOWN_DISP_STR.get())
-            for i in range(0,c_max_dmx_ch):
-                g_cur_dmx_output[i]=float(self.DMX_VALS_STRS[i].get())
-                print("got DMX Output" + str(i) + " at " + str(g_cur_dmx_output[i]))
-            print "Record Cue"
-            insert_cue(g_entered_cue_num, g_cur_dmx_output, g_entered_up_time, g_entered_down_time)
+           self.read_gui_input() #get current gui values
+           insert_cue(g_entered_cue_num, g_cur_dmx_output, g_entered_up_time, g_entered_down_time)
     
     def read_gui_input(self): #actions to do whenever a text box is changed in the GUI
         global g_cur_dmx_output
@@ -199,12 +196,12 @@ class Application(Frame):
         #print("TEST!")
         try:
             if(g_state == c_STATE_STANDBY):
-                g_entered_cue_num = float(self.CUE_NUM_DISP_STR.get())
-                g_entered_up_time = float(self.CUE_TIME_UP_DISP_STR.get())
-                g_entered_down_time = float(self.CUE_TIME_DOWN_DISP_STR.get())
+                g_entered_cue_num = abs(float(self.CUE_NUM_DISP_STR.get()))
+                g_entered_up_time = abs(float(self.CUE_TIME_UP_DISP_STR.get()))
+                g_entered_down_time = abs(float(self.CUE_TIME_DOWN_DISP_STR.get()))
                 for i in range(0,c_max_dmx_ch):
                     try:
-                        g_cur_dmx_output[i]=float(self.DMX_VALS_STRS[i].get())
+                        g_cur_dmx_output[i]=abs(int(self.DMX_VALS_STRS[i].get()))
                         #print("got DMX Output" + str(i) + " at " + str(g_cur_dmx_output[i]))
                     except ValueError:
                         print "Val Error reading from GUI"
@@ -338,7 +335,7 @@ class Application(Frame):
     #define what needs to happen each frame update
     def update_displayed_vals(self):
         for i in range(0,c_max_dmx_ch):
-            self.DMX_VALS_STRS[i].set(str(g_cur_dmx_output[i]))
+            self.DMX_VALS_STRS[i].set(str(int(g_cur_dmx_output[i])))
         self.CUE_NUM_DISP_STR.set(str(g_cue_list[g_cur_cue_index].CUE_NUM))
         self.CUE_TIME_UP_DISP_STR.set((g_cue_list[g_cur_cue_index].UP_TIME))
                 
@@ -369,31 +366,30 @@ class Timed_Thread(threading.Thread):
         while(g_kill_timed_thread != 1):
             time.sleep(c_sec_per_frame - timedif) #start by waiting
             starttime = datetime.datetime.now().microsecond #mark time we start the loop at
-            #temp!!!
-            #g_cur_dmx_output[1] = g_cur_dmx_output[1]+1
             #calculate current DMX frame
-            if(g_state == c_STATE_TRANSITION_FWD):
+           
+            #if we're transitioning, the current dmx frame is dependant on how long we've been transitioning 
+            if(g_state == c_STATE_TRANSITION_FWD or g_state == c_STATE_TRANSITION_BKW):
                 for i in range(0, c_max_dmx_ch): #calculate each dmx value based on how far we are through the fade
-                    g_cur_dmx_output[i] = g_prev_dmx_output[i]*(1-(g_sec_into_transition/g_cue_list[g_cur_cue_index].UP_TIME))+g_cue_list[g_cur_cue_index].DMX_VALS[i]*(g_sec_into_transition/g_cue_list[g_cur_cue_index].UP_TIME)
+                    g_cur_dmx_output[i] = int(float(g_prev_dmx_output[i])*(1.0-(g_sec_into_transition/g_cue_list[g_cur_cue_index].UP_TIME))+float(g_cue_list[g_cur_cue_index].DMX_VALS[i])*(g_sec_into_transition/g_cue_list[g_cur_cue_index].UP_TIME))
                 app.update_displayed_vals() #update the displayed vals on the screen
-                g_sec_into_transition = g_sec_into_transition + c_sec_per_frame #update how far we are through the fade
-                if(g_sec_into_transition >= g_cue_list[g_cur_cue_index].UP_TIME): #catch if the fade is done, and end it
+                if(g_sec_into_transition >= g_cue_list[g_cur_cue_index].UP_TIME-c_sec_per_frame/2): #catch if the fade is done, and end it
                     g_state = c_STATE_STANDBY
-            
-            elif(g_state == c_STATE_TRANSITION_BKW):
-                for i in range(0, c_max_dmx_ch): #calculate each dmx value based on how far we are through the fade
-                    g_cur_dmx_output[i] = g_prev_dmx_output[i]*(1-(g_sec_into_transition/g_cue_list[g_cur_cue_index].UP_TIME))+g_cue_list[g_cur_cue_index].DMX_VALS[i]*(g_sec_into_transition/g_cue_list[g_cur_cue_index].UP_TIME)
-                app.update_displayed_vals() #update the displayed vals on the screen
-                g_sec_into_transition = g_sec_into_transition + c_sec_per_frame #update how far we are through the fade
-                if(g_sec_into_transition >= g_cue_list[g_cur_cue_index].UP_TIME): #catch if the fade is done, and end it
-                    g_state = c_STATE_STANDBY
-            
+                    g_sec_into_transition = 0
+                    for i in range(0,c_max_dmx_ch): #account for descrete timestep issues by ensuring the last loop in transition sets the outptus right
+                        g_cur_dmx_output[i] = g_cue_list[g_cur_cue_index].DMX_VALS[i]
+                else:
+                    g_sec_into_transition = g_sec_into_transition + c_sec_per_frame #update how far we are through the fade
+          
+            #if we're in standby, we should read the gui's values (user editable)
             elif(g_state == c_STATE_STANDBY):
                 app.read_gui_input() 
+          
+
             #tx current dmx frame
-            #print("DMX Frame at" + str(time.time()))
-            #print( g_cur_dmx_output)
-            print_cue(0) 
+            
+            #add serial tx here!!!!
+
             #calculate how well we did keeping time and correct for it
             endtime = datetime.datetime.now().microsecond #mark how long the timed loop took
             if(endtime > starttime):
