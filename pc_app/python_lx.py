@@ -34,6 +34,11 @@ g_prev_dmx_output = [0]*c_max_dmx_ch #dmx frame right before the go or back butt
 g_cur_cue_index = 0 
 g_state = c_STATE_NOT_READY; #current state of the system
 
+#User-entered numbers for cue information
+g_entered_cue_num = 0
+g_entered_up_time = 0
+g_entered_down_time = 0
+
 g_kill_timed_thread = 0; #set to 1 on exit
 g_sec_into_transition = 0.0;
 
@@ -66,26 +71,39 @@ class Cue:
 
 def insert_cue(cue_num, dmx_vals,up_time, down_time):
     print "inserting cue..."
+    global g_cur_cue_index
     #case, insert only cue
     if(len(g_cue_list) == 0):
         g_cue_list.append(Cue(cue_num, dmx_vals,up_time,down_time))
+        g_cur_cue_index = 0
     #case, insert first cue
     elif(cue_num < g_cue_list[0].CUE_NUM):
         g_cue_list.insert(0, Cue(cue_num,dmx_vals,up_time,down_time))
+        g_cur_cue_index = 0
     #case, insert last cue
-    elif(cue_num > g_cue_list[len(g_cue_list)].CUE_NUM):
+    elif(cue_num > g_cue_list[len(g_cue_list)-1].CUE_NUM):
         g_cue_list.append(Cue(cue_num,dmx_vals,up_time,down_time))
+        g_cur_cue_index = len(g_cue_list)-1
     #case, replace last cue
-    elif(cue_num == g_cue_list[len(g_cue_list)].CUE_NUM):
-        g_cue_list[i] = Cue(cue_num,dmx_vals,up_time,down_time)
+    elif(cue_num == g_cue_list[len(g_cue_list)-1].CUE_NUM):
+        print "overwriting cue!"
+        g_cue_list[len(g_cue_list)-1] = Cue(cue_num,dmx_vals,up_time,down_time)
+        g_cur_cue_index = len(g_cue_list)-1
     #case, insert cue in middle of list
     else:
         for i in range(0,len(g_cue_list)-1):
     	    if(cue_num == g_cue_list[i].CUE_NUM):#case, overwrite existing cue
+                print "overwriting cue!"
     	        g_cue_list[i] = Cue(cue_num,dmx_vals,up_time,down_time)
+                g_cur_cue_index = i
+                break
     	    elif(cue_num > g_cue_list[i].CUE_NUM and cue_num < g_cue_list[i+1]):
-    	        g_cue_list[i].append(i+1, Cue(cue_num,dmx_vals,up_time,down_time))
-    		    
+    	        g_cue_list.insert(i+1, Cue(cue_num,dmx_vals,up_time,down_time))
+                g_cur_cue_index = i+1
+                break
+    for i in range(0,len(g_cue_list)-1):
+        print g_cue_list[i]   		   
+ 
 def remove_cue(cue_num):
     for i in range(0,len(g_cue_list)): #linearlly traverse list until cue is found
         if(g_cue_list[i].CUE_NUM == cue_num):
@@ -107,7 +125,7 @@ class Application(Frame):
     def go_but_act(self):
         global g_prev_dmx_output
         global g_cur_cue_index
-        global g_cur_state
+        global g_state
         global g_sec_into_transition
         if(g_cur_cue_index < len(g_cue_list)-1): 
             print "Go!"
@@ -119,7 +137,7 @@ class Application(Frame):
     def back_but_act(self):
         global g_prev_dmx_output
         global g_cur_cue_index
-        global g_cur_state
+        global g_state
         global g_sec_into_transition
         if(g_cur_cue_index > 0):   
             print "Back..." 
@@ -129,8 +147,39 @@ class Application(Frame):
             g_sec_into_transition = 0.0
     
     def record_cue_but_act(self):
-        print "Record Cue"
+        global g_prev_dmx_output
+        global g_cur_cue_index
+        global g_sec_into_transition
+        if(g_state == c_STATE_STANDBY):
+            g_entered_cue_num = float(self.CUE_NUM_DISP_STR.get())
+            g_entered_up_time = float(self.CUE_TIME_DOWN_DISP_STR.get())
+            g_entered_down_time = float(self.CUE_TIME_DOWN_DISP_STR.get())
+            for i in range(0,c_max_dmx_ch):
+                g_cur_dmx_output[i]=float(self.DMX_VALS_STRS[i].get())
+                print("got DMX Output" + str(i) + " at " + str(g_cur_dmx_output[i]))
+            print "Record Cue"
+            insert_cue(g_entered_cue_num, g_cur_dmx_output, g_entered_up_time, g_entered_down_time)
     
+    def read_gui_input(self): #actions to do whenever a text box is changed in the GUI
+        global g_cur_dmx_output
+        global g_entered_cue_num
+        global g_entered_up_time
+        global g_entered_down_time
+        #print("TEST!")
+        try:
+            if(g_state == c_STATE_STANDBY):
+                g_entered_cue_num = float(self.CUE_NUM_DISP_STR.get())
+                g_entered_up_time = float(self.CUE_TIME_DOWN_DISP_STR.get())
+                g_entered_down_time = float(self.CUE_TIME_DOWN_DISP_STR.get())
+                for i in range(0,c_max_dmx_ch):
+                    try:
+                        g_cur_dmx_output[i]=float(self.DMX_VALS_STRS[i].get())
+                        #print("got DMX Output" + str(i) + " at " + str(g_cur_dmx_output[i]))
+                    except ValueError:
+                        print "Val Error reading from GUI"
+        except ValueError:
+            print"Val Error Reading from GUI"
+
     #GUI Creation
     def create_widgets(self):
         #dmx ch displays will be arranged in a grid. 
@@ -203,7 +252,21 @@ class Application(Frame):
         self.CUE_TIME_UP_DISP["selectbackground"] = "slate blue"
         self.CUE_TIME_UP_DISP.grid(row=1, column=1)        
         self.CUE_TIME_UP_DISP_STR.set(0)#temp, need time here
+       
+        self.CUE_TIME_DOWN_DISP_LABEL = Label(self.CUE_INFO_FRAME, text = "Time Down")
+        self.CUE_TIME_DOWN_DISP_LABEL.grid(row=2, column=0) 
+        self.CUE_TIME_DOWN_DISP_STR = StringVar() #create a string variable for the cue number        
+        self.CUE_TIME_DOWN_DISP = Entry(self.CUE_INFO_FRAME, textvariable=self.CUE_TIME_DOWN_DISP_STR)
+        self.CUE_TIME_DOWN_DISP["bg"] = "navy"
+        self.CUE_TIME_DOWN_DISP["fg"] = "white"
+        self.CUE_TIME_DOWN_DISP["width"] = 4
+        self.CUE_TIME_DOWN_DISP["exportselection"] = 0 #don't copy to clipboard by default
+        self.CUE_TIME_DOWN_DISP["selectbackground"] = "slate blue"
+        self.CUE_TIME_DOWN_DISP.grid(row=2, column=1)        
+        self.CUE_TIME_DOWN_DISP_STR.set(0)#temp, need time here
         
+
+ 
         #set up a frame for the programming buttons
         self.PROG_BTNS = Frame(root)
         self.PROG_BTNS.grid(row = 2, column = 1)
@@ -286,17 +349,16 @@ class Timed_Thread(threading.Thread):
                 if(g_sec_into_transition >= g_cue_list[g_cur_cue_index].UP_TIME): #catch if the fade is done, and end it
                     g_state = c_STATE_STANDBY
             
-            #do nothing if we're in standby (steady state)
-            
+            elif(g_state == c_STATE_STANDBY):
+                app.read_gui_input() 
             #tx current dmx frame
-            print("DMX Frame at" + str(time.time()))
-            print( g_cur_dmx_output)
+            #print("DMX Frame at" + str(time.time()))
+            #print( g_cur_dmx_output)
             
             #calculate how well we did keeping time and correct for it
             endtime = datetime.datetime.now().microsecond #mark how long the timed loop took
             if(endtime > starttime):
                 timedif = float(endtime-starttime)/1000000.0 #calculate a sleep correction factor
-            print(timedif)
             if(timedif > c_sec_per_frame ):
                 timedif = c_sec_per_frame  #but warn the user if we missed the deadline
                 print("WARNING MISSED TIMED LOOP DEADLINE")
