@@ -1,5 +1,5 @@
-#######################################################################################################################
-#######################################################################################################################
+########################################################################
+########################################################################
 ###
 ### Python_LX - A simple, Python and Arduino based DMX512 lighting console
 ### by Chris Gerth - Summer/Fall 2014
@@ -7,19 +7,20 @@
 ### File - python_lx.py - main python function for GUI
 ### Dependencies - Tkinter, pySerial
 ###
-#######################################################################################################################
-#######################################################################################################################
+########################################################################
+########################################################################
 from Tkinter import * #gui
 import serial #arduino communication
-import os, sys, math, threading, time, datetime #system dependencies
+import os, sys, math, threading, time, datetime, copy #system dependencies
 
 
-#######################################################################################################################
+########################################################################
 ### DATA
-#######################################################################################################################
+########################################################################
 #Constants
 c_dmx_disp_row_width = 32
 c_max_dmx_ch = 16; #highest DMX channel. Must be in range [1,512]
+c_sec_per_frame = 0.1; #refresh rate for dmx channel data
 
 #"enum" def for states of the system
 c_STATE_NOT_READY = -1
@@ -29,58 +30,104 @@ c_STATE_TRANSITION_BKW = 2
 
 #Global Variables
 g_cur_dmx_output = [0]*c_max_dmx_ch # current dmx frame output values
-g_cur_cue_index = 0 # current cue (index into cue list). Invalid if state is "TRANSITION_FWD" or "TRANSITION_BKW"
-g_prev_cue_index = 0 # last cue (index into cue list). Valid only if state is "TRANSITION_FWD" or "TRANSITION_BKW"
-g_next_cue_index = 0 # next cue (index into cue list). Valid only if state is "TRANSITION_FWD" or "TRANSITION_BKW"
+g_prev_dmx_output = [0]*c_max_dmx_ch #dmx frame right before the go or back button was pushed
+g_cur_cue_index = 0 
 g_state = c_STATE_NOT_READY; #current state of the system
 
 g_kill_timed_thread = 0; #set to 1 on exit
-g_sec_per_frame = 0.1;
+g_sec_into_transition = 0.0;
 
 g_cue_list = [];
 
-#######################################################################################################################
+########################################################################
 ### END DATA
-#######################################################################################################################
+########################################################################
 
-#######################################################################################################################
+########################################################################
 ### CUE DEFINITION
-#######################################################################################################################
+########################################################################
 #Cues are members in a python list
 #Each cue is a struct of the dmx values, the cue number, and the transition timing information
 class Cue:
-    def __init__(self, i_cue_num, i_dmx_vals):
+    def __init__(self, i_cue_num, i_dmx_vals,i_up_time, i_down_time):
         self.CUE_NUM = i_cue_num
         self.DMX_VALS = i_dmx_vals
-        self.UP_TIME = 0
-        self.DOWN_TIME = 0         
+        self.UP_TIME = i_up_time+c_sec_per_frame #can't actually have zero transition time
+        self.DOWN_TIME = i_down_time+c_sec_per_frame #can't actually have zero transition time
         
-#######################################################################################################################
+########################################################################
 ### END CUE DEFINITION
-#######################################################################################################################
+########################################################################
 
-#######################################################################################################################
+########################################################################
 ### CUE LIST FUNCTION DEFINITION
-#######################################################################################################################
+########################################################################
 #the Cue List is a python list. These functions are used to insert or remove cues from the list
 
-def insert_cue(cue_list, cue_num):
+def insert_cue(cue_num, dmx_vals,up_time, down_time):
     print "inserting cue..."
-def remove_cue(cue_list, cue_num):
-    print "removing cue..."
-#######################################################################################################################
-### END CUE LIST FUNCTION DEFINITION
-#######################################################################################################################
+    #case, insert only cue
+    if(len(g_cue_list) == 0):
+        g_cue_list.append(Cue(cue_num, dmx_vals,up_time,down_time))
+    #case, insert first cue
+    elif(cue_num < g_cue_list[0].CUE_NUM):
+        g_cue_list.insert(0, Cue(cue_num,dmx_vals,up_time,down_time))
+    #case, insert last cue
+    elif(cue_num > g_cue_list[len(g_cue_list)].CUE_NUM):
+        g_cue_list.append(Cue(cue_num,dmx_vals,up_time,down_time))
+    #case, replace last cue
+    elif(cue_num == g_cue_list[len(g_cue_list)].CUE_NUM):
+        g_cue_list[i] = Cue(cue_num,dmx_vals,up_time,down_time)
+    #case, insert cue in middle of list
+    else:
+        for i in range(0,len(g_cue_list)-1):
+    	    if(cue_num == g_cue_list[i].CUE_NUM):#case, overwrite existing cue
+    	        g_cue_list[i] = Cue(cue_num,dmx_vals,up_time,down_time)
+    	    elif(cue_num > g_cue_list[i].CUE_NUM and cue_num < g_cue_list[i+1]):
+    	        g_cue_list[i].append(i+1, Cue(cue_num,dmx_vals,up_time,down_time))
+    		    
+def remove_cue(cue_num):
+    for i in range(0,len(g_cue_list)): #linearlly traverse list until cue is found
+        if(g_cue_list[i].CUE_NUM == cue_num):
+            print "removing cue..."
+            g_cue_list.pop(i)
 
-#######################################################################################################################
+#############################################################
+### END CUE LIST FUNCTION DEFINITION
+########################################################################
+
+
+
+########################################################################
 ### APPLICATION DEFINITION
-#######################################################################################################################
+########################################################################
 class Application(Frame):
+
     #Button action definitions
     def go_but_act(self):
-        print "Go!"
+        global g_prev_dmx_output
+        global g_cur_cue_index
+        global g_cur_state
+        global g_sec_into_transition
+        if(g_cur_cue_index < len(g_cue_list)-1): 
+            print "Go!"
+            g_prev_dmx_output = copy.deepcopy(g_cur_dmx_output)
+            g_cur_cue_index = g_cur_cue_index+1
+            g_state = c_STATE_TRANSITION_FWD
+            g_sec_into_transition = 0.0
+    
     def back_but_act(self):
-        print "Back..."
+        global g_prev_dmx_output
+        global g_cur_cue_index
+        global g_cur_state
+        global g_sec_into_transition
+        if(g_cur_cue_index > 0):   
+            print "Back..." 
+            g_prev_dmx_output = copy.deepcopy(g_cur_dmx_output)
+            g_cur_cue_index = g_cur_cue_index-1
+            g_state = c_STATE_TRANSITION_BKW
+            g_sec_into_transition = 0.0
+    
     def record_cue_but_act(self):
         print "Record Cue"
     
@@ -143,7 +190,7 @@ class Application(Frame):
         self.CUE_NUM_DISP["exportselection"] = 0 #don't copy to clipboard by default
         self.CUE_NUM_DISP["selectbackground"] = "slate blue"
         self.CUE_NUM_DISP.grid(row=0, column=1)
-        self.CUE_NUM_DISP_STR.set(str(g_cur_cue_index))#temp, need cue number here
+        self.CUE_NUM_DISP_STR.set(0)#temp, need cue number here
         
         self.CUE_TIME_UP_DISP_LABEL = Label(self.CUE_INFO_FRAME, text = "Time Up")
         self.CUE_TIME_UP_DISP_LABEL.grid(row=1, column=0) 
@@ -155,7 +202,7 @@ class Application(Frame):
         self.CUE_TIME_UP_DISP["exportselection"] = 0 #don't copy to clipboard by default
         self.CUE_TIME_UP_DISP["selectbackground"] = "slate blue"
         self.CUE_TIME_UP_DISP.grid(row=1, column=1)        
-        self.CUE_NUM_DISP_STR.set(0)#temp, need time here
+        self.CUE_TIME_UP_DISP_STR.set(0)#temp, need time here
         
         #set up a frame for the programming buttons
         self.PROG_BTNS = Frame(root)
@@ -190,60 +237,83 @@ class Application(Frame):
     def update_displayed_vals(self):
         for i in range(0,c_max_dmx_ch):
             self.DMX_VALS_STRS[i].set(str(g_cur_dmx_output[i]))
-        self.CUE_NUM_DISP_STR.set(str(g_cur_cue_index))#temp, need cue number here
-        self.CUE_NUM_DISP_STR.set(0)#temp, need time here
+        self.CUE_NUM_DISP_STR.set(str(g_cue_list[g_cur_cue_index].CUE_NUM))
+        self.CUE_TIME_UP_DISP_STR.set((g_cue_list[g_cur_cue_index].UP_TIME))
                 
     #I don't really know what this does, but it doesn't work without it. :(
     def __init__(self, master=None):
         Frame.__init__(self, master)
         self.grid()
         self.create_widgets()
-#######################################################################################################################
+########################################################################
 ### END APPLICATION DEFINITION
-#######################################################################################################################
+########################################################################
 
-#######################################################################################################################
+########################################################################
 ### TIMED THREAD
-#######################################################################################################################
+########################################################################
 class Timed_Thread(threading.Thread):
     def __init__(self, threadID):
         threading.Thread.__init__(self)
         self.threadID = threadID
         self.name = "PYTHON_LX_TIMED_THREAD"
     def run(self):
+    	global g_state
+    	global g_prev_dmx_output
+        global g_cur_cue_index
+        global g_sec_into_transition
         print "Starting " + self.name
         timedif = 0
         while(g_kill_timed_thread != 1):
-            time.sleep(g_sec_per_frame - timedif) #start by waiting
+            time.sleep(c_sec_per_frame - timedif) #start by waiting
             starttime = datetime.datetime.now().microsecond #mark time we start the loop at
             #temp!!!
-            g_cur_dmx_output[1] = g_cur_dmx_output[1]+1
+            #g_cur_dmx_output[1] = g_cur_dmx_output[1]+1
             #calculate current DMX frame
+            if(g_state == c_STATE_TRANSITION_FWD):
+                for i in range(0, c_max_dmx_ch): #calculate each dmx value based on how far we are through the fade
+                    g_cur_dmx_output[i] = g_prev_dmx_output[i]*(1-(g_sec_into_transition/g_cue_list[g_cur_cue_index].UP_TIME))+g_cue_list[g_cur_cue_index].DMX_VALS[i]*(g_sec_into_transition/g_cue_list[g_cur_cue_index].UP_TIME)
+                app.update_displayed_vals() #update the displayed vals on the screen
+                g_sec_into_transition = g_sec_into_transition + c_sec_per_frame #update how far we are through the fade
+                if(g_sec_into_transition >= g_cue_list[g_cur_cue_index].UP_TIME): #catch if the fade is done, and end it
+                    g_state = c_STATE_STANDBY
+            
+            elif(g_state == c_STATE_TRANSITION_BKW):
+                for i in range(0, c_max_dmx_ch): #calculate each dmx value based on how far we are through the fade
+                    g_cur_dmx_output[i] = g_prev_dmx_output[i]*(1-(g_sec_into_transition/g_cue_list[g_cur_cue_index].UP_TIME))+g_cue_list[g_cur_cue_index].DMX_VALS[i]*(g_sec_into_transition/g_cue_list[g_cur_cue_index].UP_TIME)
+                app.update_displayed_vals() #update the displayed vals on the screen
+                g_sec_into_transition = g_sec_into_transition + c_sec_per_frame #update how far we are through the fade
+                if(g_sec_into_transition >= g_cue_list[g_cur_cue_index].UP_TIME): #catch if the fade is done, and end it
+                    g_state = c_STATE_STANDBY
+            
+            #do nothing if we're in standby (steady state)
+            
             #tx current dmx frame
             print("DMX Frame at" + str(time.time()))
             print( g_cur_dmx_output)
-            app.update_displayed_vals()
             
+            #calculate how well we did keeping time and correct for it
             endtime = datetime.datetime.now().microsecond #mark how long the timed loop took
             if(endtime > starttime):
                 timedif = float(endtime-starttime)/1000000.0 #calculate a sleep correction factor
             print(timedif)
-            if(timedif > g_sec_per_frame ):
-                timedif = g_sec_per_frame  #but warn the user if we missed the deadline
+            if(timedif > c_sec_per_frame ):
+                timedif = c_sec_per_frame  #but warn the user if we missed the deadline
                 print("WARNING MISSED TIMED LOOP DEADLINE")
 
     
-#######################################################################################################################
+########################################################################
 ### END TIMED THREAD
-#######################################################################################################################
+########################################################################
 
 
-#######################################################################################################################
+########################################################################
 ### MAIN FUNCTION
-#######################################################################################################################
+########################################################################
 #set up cue list. 
 #TEMP always make new show until file read/write is done
-
+g_cue_list.append(Cue(0,[0]*c_max_dmx_ch,0,0))
+g_cur_cue_index = 0
 
 
 #set up GUI
@@ -267,6 +337,6 @@ g_kill_timed_thread = 1;
 Timed_Thread_obj.join();
 
 
-#######################################################################################################################
+########################################################################
 ### END MAIN FUNCTION
-#######################################################################################################################
+########################################################################
