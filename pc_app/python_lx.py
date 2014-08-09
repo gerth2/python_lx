@@ -19,8 +19,8 @@ import os, sys, math, threading, time, datetime, copy #system dependencies
 ########################################################################
 #Constants
 c_dmx_disp_row_width = 32
-c_max_dmx_ch = 16; #highest DMX channel. Must be in range [1,512]
-c_sec_per_frame = 0.1; #refresh rate for dmx channel data
+c_max_dmx_ch = 150; #highest DMX channel. Must be in range [1,512]
+c_sec_per_frame = 0.05; #refresh rate for dmx channel data
 
 #"enum" def for states of the system
 c_STATE_NOT_READY = -1
@@ -28,10 +28,16 @@ c_STATE_STANDBY = 0
 c_STATE_TRANSITION_FWD = 1
 c_STATE_TRANSITION_BKW = 2
 
+c_CH_STATE_NO_CHANGE = 0
+c_CH_STATE_INC = 1
+c_CH_STATE_DEC = 2
+c_CH_STATE_EDITED = 3
+
 #Global Variables
 g_cur_dmx_output = [0]*c_max_dmx_ch # current dmx frame output values
 g_prev_dmx_output = [0]*c_max_dmx_ch #dmx frame right before the go or back button was pushed
 g_cur_cue_index = 0 
+g_ch_states_array = [c_CH_STATE_NO_CHANGE]*c_max_dmx_ch
 g_state = c_STATE_NOT_READY; #current state of the system
 
 #User-entered numbers for cue information
@@ -56,7 +62,7 @@ g_cue_list = [];
 class Cue:
     def __init__(self, i_cue_num, i_dmx_vals,i_up_time, i_down_time):
         self.CUE_NUM = copy.deepcopy(i_cue_num) #do nothing if we're in standby (steady state)
-        self.DMX_VALS = copy.deepcopy(map(int,i_dmx_vals))
+        self.DMX_VALS = copy.deepcopy(map(int,map(round,i_dmx_vals)))
         self.UP_TIME = copy.deepcopy(i_up_time+c_sec_per_frame) #can't actually have zero transition time
         self.DOWN_TIME = copy.deepcopy(i_down_time+c_sec_per_frame) #can't actually have zero transition time
         
@@ -131,7 +137,16 @@ def print_cue(cue_num):
         for i in range(0, c_max_dmx_ch):
             print("Ch" + str(i) + "@" + str(l_Cue.DMX_VALS[i]) + ", ")
 
-#############################################################
+def update_ch_states_array(prev_cue_index, next_cue_index):
+    for i in range(0,c_max_dmx_ch):
+        if(g_cue_list[prev_cue_index].DMX_VALS[i] == g_cue_list[next_cue_index].DMX_VALS[i]):
+            g_ch_states_array[i] = c_CH_STATE_NO_CHANGE
+        elif(g_cue_list[prev_cue_index].DMX_VALS[i] > g_cue_list[next_cue_index].DMX_VALS[i]):
+            g_ch_states_array[i] = c_CH_STATE_DEC
+        elif(g_cue_list[prev_cue_index].DMX_VALS[i] < g_cue_list[next_cue_index].DMX_VALS[i]):
+            g_ch_states_array[i] = c_CH_STATE_INC
+
+########################################################################
 ### END CUE LIST FUNCTION DEFINITION
 ########################################################################
 
@@ -151,6 +166,8 @@ class Application(Frame):
         l_temp = lookup_cue_index(g_entered_cue_num) #determine if the cue even exists, and what index it is
         if(l_temp != -1):
             print "Goto..."
+            update_ch_states_array(g_cur_cue_index, l_temp)
+            self.set_ch_colors() 
             g_prev_dmx_output = copy.deepcopy(g_cur_dmx_output)
             g_cur_cue_index = l_temp
             g_sec_into_transition = 0.0        
@@ -163,6 +180,8 @@ class Application(Frame):
         global g_sec_into_transition
         if(g_cur_cue_index < len(g_cue_list)-1): 
             print "Go!"
+            update_ch_states_array(g_cur_cue_index, g_cur_cue_index+1)
+            self.set_ch_colors() 
             g_prev_dmx_output = copy.deepcopy(g_cur_dmx_output)
             g_cur_cue_index = g_cur_cue_index+1
             g_sec_into_transition = 0.0
@@ -174,7 +193,9 @@ class Application(Frame):
         global g_state
         global g_sec_into_transition
         if(g_cur_cue_index > 0):   
-            print "Back..." 
+            print "Back..."
+            update_ch_states_array(g_cur_cue_index, g_cur_cue_index-1)
+            self.set_ch_colors() 
             g_prev_dmx_output = copy.deepcopy(g_cur_dmx_output)
             g_cur_cue_index = g_cur_cue_index-1
             g_state = c_STATE_TRANSITION_BKW
@@ -187,27 +208,34 @@ class Application(Frame):
         if(g_state == c_STATE_STANDBY):
            self.read_gui_input() #get current gui values
            insert_cue(g_entered_cue_num, g_cur_dmx_output, g_entered_up_time, g_entered_down_time)
-    
+
+    #GUI interaction functions 
     def read_gui_input(self): #actions to do whenever a text box is changed in the GUI
         global g_cur_dmx_output
         global g_entered_cue_num
         global g_entered_up_time
         global g_entered_down_time
-        #print("TEST!")
         try:
             if(g_state == c_STATE_STANDBY):
                 g_entered_cue_num = abs(float(self.CUE_NUM_DISP_STR.get()))
                 g_entered_up_time = abs(float(self.CUE_TIME_UP_DISP_STR.get()))
                 g_entered_down_time = abs(float(self.CUE_TIME_DOWN_DISP_STR.get()))
                 for i in range(0,c_max_dmx_ch):
-                    try:
-                        g_cur_dmx_output[i]=abs(int(self.DMX_VALS_STRS[i].get()))
-                        #print("got DMX Output" + str(i) + " at " + str(g_cur_dmx_output[i]))
+                    try:#sanitize inputs
+                        g_cur_dmx_output[i]=max(0,min(abs(int(round(float(self.DMX_VALS_STRS[i].get())))),512))
                     except ValueError:
                         print "Val Error reading from GUI"
         except ValueError:
             print"Val Error Reading from GUI"
-
+     
+    def set_ch_colors(self):
+        for i in range(0, c_max_dmx_ch):
+            if(g_ch_states_array[i] == c_CH_STATE_NO_CHANGE):
+                self.DMX_VALS_DISPS[i]["fg"] = "white"
+            elif(g_ch_states_array[i] == c_CH_STATE_INC):
+                self.DMX_VALS_DISPS[i]["fg"] = "orange red"
+            elif(g_ch_states_array[i] == c_CH_STATE_DEC):    
+                self.DMX_VALS_DISPS[i]["fg"] = "dark slate blue"
     #GUI Creation
     def create_widgets(self):
         #dmx ch displays will be arranged in a grid. 
@@ -279,7 +307,7 @@ class Application(Frame):
         self.CUE_TIME_UP_DISP["exportselection"] = 0 #don't copy to clipboard by default
         self.CUE_TIME_UP_DISP["selectbackground"] = "slate blue"
         self.CUE_TIME_UP_DISP.grid(row=1, column=1)        
-        self.CUE_TIME_UP_DISP_STR.set(0)#temp, need time here
+        self.CUE_TIME_UP_DISP_STR.set(1)#temp, need time here
        
         self.CUE_TIME_DOWN_DISP_LABEL = Label(self.CUE_INFO_FRAME, text = "Time Down")
         self.CUE_TIME_DOWN_DISP_LABEL.grid(row=2, column=0) 
@@ -291,7 +319,7 @@ class Application(Frame):
         self.CUE_TIME_DOWN_DISP["exportselection"] = 0 #don't copy to clipboard by default
         self.CUE_TIME_DOWN_DISP["selectbackground"] = "slate blue"
         self.CUE_TIME_DOWN_DISP.grid(row=2, column=1)        
-        self.CUE_TIME_DOWN_DISP_STR.set(0)#temp, need time here
+        self.CUE_TIME_DOWN_DISP_STR.set(1)#temp, need time here
         
 
  
@@ -371,13 +399,13 @@ class Timed_Thread(threading.Thread):
             #if we're transitioning, the current dmx frame is dependant on how long we've been transitioning 
             if(g_state == c_STATE_TRANSITION_FWD or g_state == c_STATE_TRANSITION_BKW):
                 for i in range(0, c_max_dmx_ch): #calculate each dmx value based on how far we are through the fade
-                    g_cur_dmx_output[i] = int(float(g_prev_dmx_output[i])*(1.0-(g_sec_into_transition/g_cue_list[g_cur_cue_index].UP_TIME))+float(g_cue_list[g_cur_cue_index].DMX_VALS[i])*(g_sec_into_transition/g_cue_list[g_cur_cue_index].UP_TIME))
+                    g_cur_dmx_output[i] = int(round(float(g_prev_dmx_output[i])*(1.0-(g_sec_into_transition/g_cue_list[g_cur_cue_index].UP_TIME))+float(g_cue_list[g_cur_cue_index].DMX_VALS[i])*(g_sec_into_transition/g_cue_list[g_cur_cue_index].UP_TIME)))
                 app.update_displayed_vals() #update the displayed vals on the screen
                 if(g_sec_into_transition >= g_cue_list[g_cur_cue_index].UP_TIME-c_sec_per_frame/2): #catch if the fade is done, and end it
                     g_state = c_STATE_STANDBY
                     g_sec_into_transition = 0
                     for i in range(0,c_max_dmx_ch): #account for descrete timestep issues by ensuring the last loop in transition sets the outptus right
-                        g_cur_dmx_output[i] = g_cue_list[g_cur_cue_index].DMX_VALS[i]
+                        g_cur_dmx_output[i] = int(round(g_cue_list[g_cur_cue_index].DMX_VALS[i]))
                 else:
                     g_sec_into_transition = g_sec_into_transition + c_sec_per_frame #update how far we are through the fade
           
