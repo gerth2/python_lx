@@ -55,10 +55,10 @@ g_cue_list = [];
 #Each cue is a struct of the dmx values, the cue number, and the transition timing information
 class Cue:
     def __init__(self, i_cue_num, i_dmx_vals,i_up_time, i_down_time):
-        self.CUE_NUM = i_cue_num
-        self.DMX_VALS = i_dmx_vals
-        self.UP_TIME = i_up_time+c_sec_per_frame #can't actually have zero transition time
-        self.DOWN_TIME = i_down_time+c_sec_per_frame #can't actually have zero transition time
+        self.CUE_NUM = copy.deepcopy(i_cue_num) #do nothing if we're in standby (steady state)
+        self.DMX_VALS = copy.deepcopy(i_dmx_vals)
+        self.UP_TIME = copy.deepcopy(i_up_time+c_sec_per_frame) #can't actually have zero transition time
+        self.DOWN_TIME = copy.deepcopy(i_down_time+c_sec_per_frame) #can't actually have zero transition time
         
 ########################################################################
 ### END CUE DEFINITION
@@ -110,6 +110,24 @@ def remove_cue(cue_num):
             print "removing cue..."
             g_cue_list.pop(i)
 
+def lookup_cue_index(cue_num):
+    for i in range(0,len(g_cue_list)): #linearlly traverse list until cue is found
+        if(g_cue_list[i].CUE_NUM == cue_num):
+            return int(i)
+    print "Cue " + str(cue_num) + " does not exist"
+    return -1
+
+def print_cue(cue_num):
+    l_cue_index = lookup_cue_index(cue_num)
+    if(l_cue_index != -1):
+        l_Cue = g_cue_list[l_cue_index]
+        print("Cue # " + str(l_Cue.CUE_NUM))
+        print("UpTime: " + str(l_Cue.UP_TIME))
+        print("DownTime: " + str(l_Cue.DOWN_TIME))
+        print("DMX Vals: ")
+        for i in range(0, c_max_dmx_ch):
+            print("Ch" + str(i) + "@" + str(l_Cue.DMX_VALS[i]) + ", ")
+
 #############################################################
 ### END CUE LIST FUNCTION DEFINITION
 ########################################################################
@@ -122,6 +140,19 @@ def remove_cue(cue_num):
 class Application(Frame):
 
     #Button action definitions
+    def goto_but_act(self):
+        global g_prev_dmx_output
+        global g_cur_cue_index
+        global g_state
+        global g_sec_into_transition 
+        l_temp = lookup_cue_index(g_entered_cue_num) #determine if the cue even exists, and what index it is
+        if(l_temp != -1):
+            print "Goto..."
+            g_prev_dmx_output = copy.deepcopy(g_cur_dmx_output)
+            g_cur_cue_index = l_temp
+            g_sec_into_transition = 0.0        
+            g_state = c_STATE_TRANSITION_FWD
+
     def go_but_act(self):
         global g_prev_dmx_output
         global g_cur_cue_index
@@ -131,9 +162,9 @@ class Application(Frame):
             print "Go!"
             g_prev_dmx_output = copy.deepcopy(g_cur_dmx_output)
             g_cur_cue_index = g_cur_cue_index+1
-            g_state = c_STATE_TRANSITION_FWD
             g_sec_into_transition = 0.0
-    
+            g_state = c_STATE_TRANSITION_FWD
+
     def back_but_act(self):
         global g_prev_dmx_output
         global g_cur_cue_index
@@ -152,7 +183,7 @@ class Application(Frame):
         global g_sec_into_transition
         if(g_state == c_STATE_STANDBY):
             g_entered_cue_num = float(self.CUE_NUM_DISP_STR.get())
-            g_entered_up_time = float(self.CUE_TIME_DOWN_DISP_STR.get())
+            g_entered_up_time = float(self.CUE_TIME_UP_DISP_STR.get())
             g_entered_down_time = float(self.CUE_TIME_DOWN_DISP_STR.get())
             for i in range(0,c_max_dmx_ch):
                 g_cur_dmx_output[i]=float(self.DMX_VALS_STRS[i].get())
@@ -169,7 +200,7 @@ class Application(Frame):
         try:
             if(g_state == c_STATE_STANDBY):
                 g_entered_cue_num = float(self.CUE_NUM_DISP_STR.get())
-                g_entered_up_time = float(self.CUE_TIME_DOWN_DISP_STR.get())
+                g_entered_up_time = float(self.CUE_TIME_UP_DISP_STR.get())
                 g_entered_down_time = float(self.CUE_TIME_DOWN_DISP_STR.get())
                 for i in range(0,c_max_dmx_ch):
                     try:
@@ -294,8 +325,16 @@ class Application(Frame):
         self.GO["text"] = "GO"
         self.GO["fg"]   = "green"
         self.GO["command"] =  self.go_but_act
-        self.GO.grid(row = 0, column = 2)
+        self.GO.grid(row = 0, column = 1)
+       
+        #define Go Button
+        self.GOTO = Button(self.SHOW_CTRL_BTNS)
+        self.GOTO["text"] = "GoToCue"
+        self.GOTO["fg"]   = "black"
+        self.GOTO["command"] =  self.goto_but_act
+        self.GOTO.grid(row = 0, column = 2)
         
+ 
     #define what needs to happen each frame update
     def update_displayed_vals(self):
         for i in range(0,c_max_dmx_ch):
@@ -354,7 +393,7 @@ class Timed_Thread(threading.Thread):
             #tx current dmx frame
             #print("DMX Frame at" + str(time.time()))
             #print( g_cur_dmx_output)
-            
+            print_cue(0) 
             #calculate how well we did keeping time and correct for it
             endtime = datetime.datetime.now().microsecond #mark how long the timed loop took
             if(endtime > starttime):
