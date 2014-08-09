@@ -17,7 +17,7 @@ import os, sys, math, threading, time, datetime, copy #system dependencies
 ########################################################################
 ### DATA
 ########################################################################
-#Constants
+#Constants (cannot change at runtime)
 c_dmx_disp_row_width = 32
 c_max_dmx_ch = 150; #highest DMX channel. Must be in range [1,512]
 c_sec_per_frame = 0.05; #refresh rate for dmx channel data
@@ -33,22 +33,39 @@ c_CH_STATE_INC = 1
 c_CH_STATE_DEC = 2
 c_CH_STATE_EDITED = 3
 
-#Global Variables
-g_cur_dmx_output = [0]*c_max_dmx_ch # current dmx frame output values
-g_prev_dmx_output = [0]*c_max_dmx_ch #dmx frame right before the go or back button was pushed
-g_cur_cue_index = 0 
-g_ch_states_array = [c_CH_STATE_NO_CHANGE]*c_max_dmx_ch
-g_state = c_STATE_NOT_READY; #current state of the system
+#Initalize global data
+def init_global_data():
+    #Variables which will be global:
+    global g_cur_dmx_output
+    global g_prev_dmx_output
+    global g_cur_cue_index
+    global g_ch_states_array
+    global g_state
+    global g_entered_cue_num
+    global g_entered_up_time
+    global g_entered_down_time
+    global g_kill_timed_thread
+    global g_sec_into_transition
+    global g_cue_list
 
-#User-entered numbers for cue information
-g_entered_cue_num = 0
-g_entered_up_time = 0
-g_entered_down_time = 0
 
-g_kill_timed_thread = 0; #set to 1 on exit
-g_sec_into_transition = 0.0;
+    #set default values for these variables
+    g_cur_dmx_output = [0]*c_max_dmx_ch # current dmx frame output values
+    g_prev_dmx_output = [0]*c_max_dmx_ch #dmx frame right before the go or back button was pushed
+    g_cur_cue_index = 0 
+    g_ch_states_array = [c_CH_STATE_NO_CHANGE]*c_max_dmx_ch
+    g_state = c_STATE_NOT_READY; #current state of the system
 
-g_cue_list = [];
+    #User-entered numbers for cue information
+    g_entered_cue_num = 0
+    g_entered_up_time = 1
+    g_entered_down_time = 1
+
+    g_kill_timed_thread = 0; #set to 1 on exit
+    g_sec_into_transition = 0.0;
+
+    g_cue_list = [];
+
 
 ########################################################################
 ### END DATA
@@ -295,7 +312,7 @@ class Application(Frame):
         self.CUE_NUM_DISP["exportselection"] = 0 #don't copy to clipboard by default
         self.CUE_NUM_DISP["selectbackground"] = "slate blue"
         self.CUE_NUM_DISP.grid(row=0, column=1)
-        self.CUE_NUM_DISP_STR.set(0)#temp, need cue number here
+        self.CUE_NUM_DISP_STR.set(str(g_entered_cue_num))
         
         self.CUE_TIME_UP_DISP_LABEL = Label(self.CUE_INFO_FRAME, text = "Time Up")
         self.CUE_TIME_UP_DISP_LABEL.grid(row=1, column=0) 
@@ -307,7 +324,7 @@ class Application(Frame):
         self.CUE_TIME_UP_DISP["exportselection"] = 0 #don't copy to clipboard by default
         self.CUE_TIME_UP_DISP["selectbackground"] = "slate blue"
         self.CUE_TIME_UP_DISP.grid(row=1, column=1)        
-        self.CUE_TIME_UP_DISP_STR.set(1)#temp, need time here
+        self.CUE_TIME_UP_DISP_STR.set(str(g_entered_up_time))
        
         self.CUE_TIME_DOWN_DISP_LABEL = Label(self.CUE_INFO_FRAME, text = "Time Down")
         self.CUE_TIME_DOWN_DISP_LABEL.grid(row=2, column=0) 
@@ -319,7 +336,7 @@ class Application(Frame):
         self.CUE_TIME_DOWN_DISP["exportselection"] = 0 #don't copy to clipboard by default
         self.CUE_TIME_DOWN_DISP["selectbackground"] = "slate blue"
         self.CUE_TIME_DOWN_DISP.grid(row=2, column=1)        
-        self.CUE_TIME_DOWN_DISP_STR.set(1)#temp, need time here
+        self.CUE_TIME_DOWN_DISP_STR.set(str(g_entered_down_time))
         
 
  
@@ -336,7 +353,7 @@ class Application(Frame):
         
         #set up a frame for the show control buttons
         self.SHOW_CTRL_BTNS = Frame(root)
-        self.SHOW_CTRL_BTNS.grid(row = 3, column = 1)
+        self.SHOW_CTRL_BTNS.grid(row = 0, column = 1)
     
         #define Back Button
         self.BACK = Button(self.SHOW_CTRL_BTNS)
@@ -358,6 +375,17 @@ class Application(Frame):
         self.GOTO["fg"]   = "black"
         self.GOTO["command"] =  self.goto_but_act
         self.GOTO.grid(row = 0, column = 2)
+
+        #set up the top level menu
+        self.MENU_BAR = Menu(root)
+        self.FILE_MENU = Menu(self.MENU_BAR, tearoff = 0)
+        self.FILE_MENU.add_command(label = "New Show", command = new_show )
+        self.FILE_MENU.add_command(label = "Open Show", command = open_show_file)
+        self.FILE_MENU.add_command(label = "Save Show", command = save_show_file)
+        self.FILE_MENU.add_separator()
+        self.FILE_MENU.add_command(label = "Exit", command = self.quit)
+        self.MENU_BAR.add_cascade(label = "File", menu = self.FILE_MENU)
+        
         
  
     #define what needs to happen each frame update
@@ -366,6 +394,7 @@ class Application(Frame):
             self.DMX_VALS_STRS[i].set(str(int(g_cur_dmx_output[i])))
         self.CUE_NUM_DISP_STR.set(str(g_cue_list[g_cur_cue_index].CUE_NUM))
         self.CUE_TIME_UP_DISP_STR.set((g_cue_list[g_cur_cue_index].UP_TIME))
+        self.CUE_TIME_DOWN_DISP_STR.set((g_cue_list[g_cur_cue_index].DOWN_TIME))
                 
     #I don't really know what this does, but it doesn't work without it. :(
     def __init__(self, master=None):
@@ -389,6 +418,7 @@ class Timed_Thread(threading.Thread):
     	global g_prev_dmx_output
         global g_cur_cue_index
         global g_sec_into_transition
+        global g_kill_timed_thread
         print "Starting " + self.name
         timedif = 0
         while(g_kill_timed_thread != 1):
@@ -433,17 +463,43 @@ class Timed_Thread(threading.Thread):
 
 
 ########################################################################
+### FILE IO FUNCTIONS
+########################################################################
+def open_show_file():
+    print("Opening...")
+#    init_global_data()
+
+def save_show_file():
+    print("Saving...")
+
+def new_show():
+    print("Creating New Show!")
+    init_global_data()
+    g_cue_list.append(Cue(0,[0]*c_max_dmx_ch,1,1))
+    g_cur_cue_index = 0
+    app.update_displayed_vals() #update the displayed vals on the screen
+    g_state = c_STATE_STANDBY
+
+########################################################################
+### END FILE IO FUNCTIONS
+########################################################################
+
+
+########################################################################
 ### MAIN FUNCTION
 ########################################################################
+#initalze interal data
+init_global_data()
+
 #set up cue list. 
-#TEMP always make new show until file read/write is done
-g_cue_list.append(Cue(0,[0]*c_max_dmx_ch,0,0))
+g_cue_list.append(Cue(0,[0]*c_max_dmx_ch,1,1))
 g_cur_cue_index = 0
 
 
 #set up GUI
 root = Tk()
 app = Application(master=root)
+root.config(menu=app.MENU_BAR)
 
 #initialize DMX Hardware
 
