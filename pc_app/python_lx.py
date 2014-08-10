@@ -10,6 +10,8 @@
 ########################################################################
 ########################################################################
 from Tkinter import * #gui
+import tkFileDialog #file io dialog boxes
+import pickle #python object mashing for file io
 import serial #arduino communication
 import os, sys, math, threading, time, datetime, copy #system dependencies
 
@@ -40,12 +42,9 @@ def init_global_data():
     global g_prev_dmx_output
     global g_cur_cue_index
     global g_ch_states_array
-    global g_state
     global g_entered_cue_num
     global g_entered_up_time
     global g_entered_down_time
-    global g_kill_timed_thread
-    global g_sec_into_transition
     global g_cue_list
 
 
@@ -54,18 +53,37 @@ def init_global_data():
     g_prev_dmx_output = [0]*c_max_dmx_ch #dmx frame right before the go or back button was pushed
     g_cur_cue_index = 0 
     g_ch_states_array = [c_CH_STATE_NO_CHANGE]*c_max_dmx_ch
-    g_state = c_STATE_NOT_READY; #current state of the system
+
 
     #User-entered numbers for cue information
     g_entered_cue_num = 0
     g_entered_up_time = 1
     g_entered_down_time = 1
 
-    g_kill_timed_thread = 0; #set to 1 on exit
-    g_sec_into_transition = 0.0;
-
     g_cue_list = [];
 
+
+#global variables which should not be tuned or altered when a new show is loaded
+g_kill_timed_thread = 0; #set to 1 on exit
+g_sec_into_transition = 0.0;
+g_state = c_STATE_NOT_READY; #current state of the system
+
+#gui access lock - used to facilitate clean shutdowns between threads
+#whenever the timed thread accesses the gui, it should get this lock 
+#first. As it is the only thing grabbing the lock normally, this 
+#should not cause deadlines to be missed by the realtime loop.
+#However, before the app is closed, the main thread will wait and 
+#grab the lock as soon as it is available, close the tk gui, and then try to 
+#join the realtime thread. On the next realtime loop, the realtime loop will 
+#get stuck in its while loop which only checks for the kill_relatime_thread
+#flag. The main thread will have set the flag. Since the lock is taken, the
+#realtime thread will be forced to check the kill flag, and exit gracefully
+#without getting the lock. Once the realtime thread has been joined, 
+#the main thread may clean up and return. All this is to prevent the main
+#thread from killing the gui while the realtime thread is trying to manipulate
+#it, which leads to very odd errors and system hangups (usually requiring a 
+#force kill of the application)
+g_gui_access_lock = threading.RLock()
 
 ########################################################################
 ### END DATA
@@ -163,6 +181,12 @@ def update_ch_states_array(prev_cue_index, next_cue_index):
         elif(g_cue_list[prev_cue_index].DMX_VALS[i] < g_cue_list[next_cue_index].DMX_VALS[i]):
             g_ch_states_array[i] = c_CH_STATE_INC
 
+def snap_to_cue(cue_index):
+    global g_cur_dmx_vals
+    if(cue_index >= 0 and cue_index < len(g_cue_list)-1):
+        for i in range(0, c_max_dmx_ch):
+            g_cur_dmx_output[i] = g_cue_list[cue_index].DMX_VALS[i]
+        app.update_displayed_vals()
 ########################################################################
 ### END CUE LIST FUNCTION DEFINITION
 ########################################################################
@@ -253,6 +277,14 @@ class Application(Frame):
                 self.DMX_VALS_DISPS[i]["fg"] = "orange red"
             elif(g_ch_states_array[i] == c_CH_STATE_DEC):    
                 self.DMX_VALS_DISPS[i]["fg"] = "dark slate blue"
+
+    def update_displayed_vals(self):
+        for i in range(0,c_max_dmx_ch):
+            self.DMX_VALS_STRS[i].set(str(int(g_cur_dmx_output[i])))
+        self.CUE_NUM_DISP_STR.set(str(g_cue_list[g_cur_cue_index].CUE_NUM))
+        self.CUE_TIME_UP_DISP_STR.set((g_cue_list[g_cur_cue_index].UP_TIME))
+        self.CUE_TIME_DOWN_DISP_STR.set((g_cue_list[g_cur_cue_index].DOWN_TIME))
+ 
     #GUI Creation
     def create_widgets(self):
         #dmx ch displays will be arranged in a grid. 
@@ -383,19 +415,9 @@ class Application(Frame):
         self.FILE_MENU.add_command(label = "Open Show", command = open_show_file)
         self.FILE_MENU.add_command(label = "Save Show", command = save_show_file)
         self.FILE_MENU.add_separator()
-        self.FILE_MENU.add_command(label = "Exit", command = self.quit)
+        self.FILE_MENU.add_command(label = "Exit", command = app_exit_graceful)
         self.MENU_BAR.add_cascade(label = "File", menu = self.FILE_MENU)
-        
-        
- 
-    #define what needs to happen each frame update
-    def update_displayed_vals(self):
-        for i in range(0,c_max_dmx_ch):
-            self.DMX_VALS_STRS[i].set(str(int(g_cur_dmx_output[i])))
-        self.CUE_NUM_DISP_STR.set(str(g_cue_list[g_cur_cue_index].CUE_NUM))
-        self.CUE_TIME_UP_DISP_STR.set((g_cue_list[g_cur_cue_index].UP_TIME))
-        self.CUE_TIME_DOWN_DISP_STR.set((g_cue_list[g_cur_cue_index].DOWN_TIME))
-                
+                       
     #I don't really know what this does, but it doesn't work without it. :(
     def __init__(self, master=None):
         Frame.__init__(self, master)
@@ -404,6 +426,28 @@ class Application(Frame):
 ########################################################################
 ### END APPLICATION DEFINITION
 ########################################################################
+
+########################################################################
+### THREAD INTERACTION FUNCTIONS
+########################################################################
+def app_exit_graceful():
+    global g_kill_timed_thread
+    global g_gui_access_lock
+    global Timed_Thread_obj
+    global app
+    #set the TIMED kill variable, wait for it to end
+    g_kill_timed_thread = 1;
+    g_gui_access_lock.acquire(blocking=1); #block here until we have the lock
+    #having the lock means the timed thread is not touching the gui, we can kill it at any time now
+    Timed_Thread_obj.join(); #wait for the timed thread to exit
+    root.destroy(); #kill the gui application. app.mainloop() should return now.
+
+   
+########################################################################
+### END THREAD INTERACTION FUNCTIONS
+########################################################################
+
+
 
 ########################################################################
 ### TIMED THREAD
@@ -419,6 +463,7 @@ class Timed_Thread(threading.Thread):
         global g_cur_cue_index
         global g_sec_into_transition
         global g_kill_timed_thread
+        global g_gui_access_lock
         print "Starting " + self.name
         timedif = 0
         while(g_kill_timed_thread != 1):
@@ -430,7 +475,15 @@ class Timed_Thread(threading.Thread):
             if(g_state == c_STATE_TRANSITION_FWD or g_state == c_STATE_TRANSITION_BKW):
                 for i in range(0, c_max_dmx_ch): #calculate each dmx value based on how far we are through the fade
                     g_cur_dmx_output[i] = int(round(float(g_prev_dmx_output[i])*(1.0-(g_sec_into_transition/g_cue_list[g_cur_cue_index].UP_TIME))+float(g_cue_list[g_cur_cue_index].DMX_VALS[i])*(g_sec_into_transition/g_cue_list[g_cur_cue_index].UP_TIME)))
+
+                #get the gui lock and update the displayed values               
+                while(g_gui_access_lock.acquire(blocking = 0) == False): #attempt to aquire the lock, spin on checking the kill_thread flag while waiting
+                    if(g_kill_timed_thread == 1): #if the lock is aquired, it means the main app is trying to exit. This thread should exit too then.
+                        return
                 app.update_displayed_vals() #update the displayed vals on the screen
+                g_gui_access_lock.release() #we're done here, release the lock
+                 
+                #calculate the next state and approprate transition actions
                 if(g_sec_into_transition >= g_cue_list[g_cur_cue_index].UP_TIME-c_sec_per_frame/2): #catch if the fade is done, and end it
                     g_state = c_STATE_STANDBY
                     g_sec_into_transition = 0
@@ -439,9 +492,14 @@ class Timed_Thread(threading.Thread):
                 else:
                     g_sec_into_transition = g_sec_into_transition + c_sec_per_frame #update how far we are through the fade
           
+
             #if we're in standby, we should read the gui's values (user editable)
             elif(g_state == c_STATE_STANDBY):
+                while(g_gui_access_lock.acquire(blocking = 0)== False): #attempt to aquire the lock, spin on checking the kill_thread flag while waiting
+                    if(g_kill_timed_thread == 1): #if the lock is aquired, it means the main app is trying to exit. This thread should exit too then.
+                        return
                 app.read_gui_input() 
+                g_gui_access_lock.release() #we're done here, give up the lock
           
 
             #tx current dmx frame
@@ -456,6 +514,8 @@ class Timed_Thread(threading.Thread):
                 timedif = c_sec_per_frame  #but warn the user if we missed the deadline
                 print("WARNING MISSED TIMED LOOP DEADLINE")
 
+        print("RTThread: got kill signal, exiting")
+        return
     
 ########################################################################
 ### END TIMED THREAD
@@ -466,13 +526,34 @@ class Timed_Thread(threading.Thread):
 ### FILE IO FUNCTIONS
 ########################################################################
 def open_show_file():
-    print("Opening...")
-#    init_global_data()
+    global g_state
+    global g_cue_list
+    global g_cur_cue_index
+    if(g_state == c_STATE_STANDBY):
+        g_state = c_STATE_NOT_READY
+        print("Opening...") #open default dialog box for file open
+        init_global_data()
+        fname = tkFileDialog.askopenfilename(defaultextension = ".plx", filetypes = [("Show Files", ".plx"), ("All Files", "*")], title = "Open Show File")
+	if(fname != ''):
+            g_cue_list = pickle.load(open(fname, "rb"))
+            g_cur_cue_index = 0
+            snap_to_cue(g_cur_cue_index)
+            app.update_displayed_vals()
+	    g_state = c_STATE_STANDBY
 
 def save_show_file():
-    print("Saving...")
+    global g_state
+    global g_cue_list
+    if(g_state == c_STATE_STANDBY):
+        print("Saving...")
+        fname = tkFileDialog.asksaveasfilename(defaultextension = ".plx", filetypes = [("Show Files", ".plx"),("All Files", "*")], title = "Save Show File")
+        if(fname != ''): #make sure user did not hit cancel
+            pickle.dump(g_cue_list, open(fname, "wb"))
 
 def new_show():
+    global g_state
+    global g_cur_cue_index
+    global g_cue_list
     print("Creating New Show!")
     init_global_data()
     g_cue_list.append(Cue(0,[0]*c_max_dmx_ch,1,1))
@@ -491,7 +572,7 @@ def new_show():
 #initalze interal data
 init_global_data()
 
-#set up cue list. 
+#set up cue list. default to empty
 g_cue_list.append(Cue(0,[0]*c_max_dmx_ch,1,1))
 g_cur_cue_index = 0
 
@@ -499,7 +580,8 @@ g_cur_cue_index = 0
 #set up GUI
 root = Tk()
 app = Application(master=root)
-root.config(menu=app.MENU_BAR)
+root.config(menu=app.MENU_BAR) #set the top menu bar
+root.protocol("WM_DELETE_WINDOW", app_exit_graceful) #set custom close handle
 
 #initialize DMX Hardware
 
@@ -512,11 +594,6 @@ Timed_Thread_obj.start()
 #run GUI
 app.mainloop() #sit here while events happen
 #User has exited, tear things down
-
-#set the TIMED kill variable, wait for it to end
-g_kill_timed_thread = 1;
-Timed_Thread_obj.join();
-
 
 ########################################################################
 ### END MAIN FUNCTION
