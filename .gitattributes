@@ -1,0 +1,7 @@
+#set up atrttributes for git to not fiddle with line endings in pickled files
+* text=auto
+.py text
+.c text
+.ino text
+.h text
+.plx binary

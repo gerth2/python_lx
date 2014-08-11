@@ -11,7 +11,7 @@
 ########################################################################
 from Tkinter import * #gui
 import tkFileDialog #file io dialog boxes
-import pickle #python object mashing for file io
+import cPickle #python object mashing for file io
 import serial #arduino communication
 import os, sys, math, threading, time, datetime, copy #system dependencies
 
@@ -312,9 +312,9 @@ class Application(Frame):
             if(g_ch_states_array[i] == c_CH_STATE_NO_CHANGE):
                 self.DMX_VALS_DISPS[i]["fg"] = "white"
             elif(g_ch_states_array[i] == c_CH_STATE_INC):
-                self.DMX_VALS_DISPS[i]["fg"] = "orange red"
+                self.DMX_VALS_DISPS[i]["fg"] = "orange"
             elif(g_ch_states_array[i] == c_CH_STATE_DEC):    
-                self.DMX_VALS_DISPS[i]["fg"] = "dark slate blue"
+                self.DMX_VALS_DISPS[i]["fg"] = "light blue"
             elif(g_ch_states_array[i] == c_CH_STATE_CAPTURED):
                 self.DMX_VALS_DISPS[i]["fg"] = "yellow"
 
@@ -582,7 +582,7 @@ def open_show_file():
         init_global_data()
         fname = tkFileDialog.askopenfilename(defaultextension = ".plx", filetypes = [("Show Files", ".plx"), ("All Files", "*")], title = "Open Show File")
 	if(fname != ''):
-            g_cue_list = pickle.load(open(fname, "rb"))
+            g_cue_list = cPickle.load(open(fname, "rb"))
             g_cur_cue_index = 0
             snap_to_cue(g_cur_cue_index)
             app.update_displayed_vals()
@@ -595,7 +595,7 @@ def save_show_file():
         print("Saving...")
         fname = tkFileDialog.asksaveasfilename(defaultextension = ".plx", filetypes = [("Show Files", ".plx"),("All Files", "*")], title = "Save Show File")
         if(fname != ''): #make sure user did not hit cancel
-            pickle.dump(g_cue_list, open(fname, "wb"))
+            cPickle.dump(g_cue_list, open(fname, "wb"))
 
 def new_show():
     global g_state
