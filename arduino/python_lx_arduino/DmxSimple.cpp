@@ -25,7 +25,7 @@ static volatile uint8_t *framePort;
 static uint8_t dmxBit = 0;
 static uint8_t frameBit = 0;
 static uint8_t dmxPin = 3; // Defaults to output on pin 3 to support Tinker.it! DMX shield
-static uint8_t framePin = dmxPin+1;
+static uint8_t framePin = 4; //Defaults to output on pin 4 Cuz I sayz so!
 
 void dmxBegin();
 void dmxEnd();
@@ -220,9 +220,10 @@ void dmxMaxChannel(int channel) {
 /** Set output pin
  * @param pin Output digital pin to use
  */
-void DmxSimpleClass::usePin(uint8_t pin) {
-  dmxPin = pin;
-  if (dmxStarted && (pin != dmxPin)) {
+void DmxSimpleClass::usePins(uint8_t i_dmx_pin, uint8_t i_frame_pin) {
+  dmxPin = i_dmx_pin;
+  framePin = i_frame_pin;
+  if (dmxStarted && (i_dmx_pin != dmxPin)) {
     dmxEnd();
     dmxBegin();
   }

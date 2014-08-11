@@ -14,38 +14,42 @@
 
 #include "DmxSimple.h" //pull from local version, which is differnt from standard library.
 
-int numch = 512;
+#define DMX_PIN 3
+#define FRAME_PIN 4
+#define ACTIVITY_LED_PIN 13
+#define MAX_DMX_CH 150
+
+#define START_OF_FRAME 0x10 //whenever this character is rx'ed, it means to reset reading to channel 1. 
+                                //yes, this cuts back on the number of levels we can incode, but it's theater
+                                //30-ft rule applies. If anyone tells you "hey, that light is at 128, not 127",
+                                //they most likely are possessed. Seek the help of the Devine.
+
 
 void setup() {
-  /* The most common pin for DMX output is pin 3, which DmxSimple
-  ** uses by default. If you need to change that, do it here. */
-  DmxSimple.usePin(3);
   Serial.begin(9600);
-
-  /* DMX devices typically need to receive a complete set of channels
-  ** even if you only need to adjust the first channel. You can
-  ** easily change the number of channels sent here. If you don't
-  ** do this, DmxSimple will set the maximum channel number to the
-  ** highest channel you DmxSimple.write() to. */
-  DmxSimple.maxChannel(numch);
-  Serial.println("Initalized!");
+  DmxSimple.usePins(DMX_PIN, FRAME_PIN); //start dmx output 
+  DmxSimple.maxChannel(MAX_DMX_CH);
 }
 
-void loop() {
-  int ch;
-  
-  while(1)
-  {
-      for (ch = 0; ch <= numch; ch++) 
-      {
-    
-        /* Update DMX channel 1 to new brightness */
-        /*temp!!!*/
-        DmxSimple.write(ch, ch);
-        
-      }
-      
-    Serial.println("Writing DMX Values...");
-  }
 
+
+void loop() {
+  uint8_t in_byte;
+  uint16_t channel;  
+  
+//note dmx transmits in the background at all times...
+  while(!Serial.available()); //wait for something to come in
+  in_byte = Serial.read();
+  if (in_byte == START_OF_FRAME) 
+  {
+    channel = 1U;
+  } 
+  
+  
+  else 
+  {
+      DmxSimple.write(channel, in_byte);
+      channel = min(channel + 1, MAX_DMX_CH);
+  }
+  
 }

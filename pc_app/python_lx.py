@@ -295,7 +295,7 @@ class Application(Frame):
                 g_entered_down_time = abs(float(self.CUE_TIME_DOWN_DISP_STR.get()))
                 for i in range(0,c_max_dmx_ch):
                     try: #sanitize inputs
-                        g_cur_dmx_output[i]=max(0,min(abs(int(round(float(self.DMX_VALS_STRS[i].get())))),512))
+                        g_cur_dmx_output[i]=max(0,min(abs(int(round(float(self.DMX_VALS_STRS[i].get())))),255))
                         if(g_cur_dmx_output[i] != g_prev_dmx_output[i]):
                             print("ch"+str(i)+" has changed")
                             l_update_colors = 1
