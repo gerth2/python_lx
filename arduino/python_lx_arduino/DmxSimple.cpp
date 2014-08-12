@@ -159,7 +159,7 @@ ISR(TIMER2_OVF_vect,ISR_NOBLOCK) {
   TIMER2_INTERRUPT_DISABLE();
 
   uint16_t bitsLeft = F_CPU / 31372; // DMX Bit periods per timer tick
-  bitsLeft >>=1; // 50% CPU usage? Not certain on the math on this one. Tradeoff between DMX update rate and stability.
+  bitsLeft >>=2; // 25% CPU usage? Not certain on the math on this one. Tradeoff between DMX update rate and stability.
   while (1) {
     if (dmxState == 0) {
       // Next thing to send is reset pulse and start code

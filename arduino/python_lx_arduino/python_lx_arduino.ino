@@ -26,7 +26,7 @@
 
 
 void setup() {
-  Serial.begin(9600);
+  Serial.begin(115200);
   DmxSimple.usePins(DMX_PIN, FRAME_PIN); //start dmx output 
   DmxSimple.maxChannel(MAX_DMX_CH);
 }
@@ -34,8 +34,8 @@ void setup() {
 
 
 void loop() {
-  uint8_t in_byte;
-  uint16_t channel;  
+  static uint8_t in_byte;
+  static uint16_t channel;  
   
 //note dmx transmits in the background at all times...
   while(!Serial.available()); //wait for something to come in

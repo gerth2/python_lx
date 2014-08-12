@@ -13,7 +13,7 @@ from Tkinter import * #gui
 import tkFileDialog #file io dialog boxes
 import cPickle #python object mashing for file io
 import serial #arduino communication
-import os, sys, math, threading, time, datetime, copy #system dependencies
+import os, sys, math, threading, time, datetime, copy, array #system dependencies
 
 
 ########################################################################
@@ -228,6 +228,7 @@ class Application(Frame):
         global g_cur_cue_index
         global g_state
         global g_sec_into_transition
+        time.sleep(0.1) #try to prevent button-mashing bug
         if(g_cur_cue_index < len(g_cue_list)-1): 
             print "Go!"
             update_ch_states_array(g_cur_cue_index, g_cur_cue_index+1)
@@ -242,6 +243,7 @@ class Application(Frame):
         global g_cur_cue_index
         global g_state
         global g_sec_into_transition
+        time.sleep(0.1) #try to prevent button-mashing bug
         if(g_cur_cue_index > 0):   
             print "Back..."
             update_ch_states_array(g_cur_cue_index, g_cur_cue_index-1)
@@ -308,15 +310,18 @@ class Application(Frame):
             self.set_ch_colors()
      
     def set_ch_colors(self):
-        for i in range(0, c_max_dmx_ch):
-            if(g_ch_states_array[i] == c_CH_STATE_NO_CHANGE):
-                self.DMX_VALS_DISPS[i]["fg"] = "white"
-            elif(g_ch_states_array[i] == c_CH_STATE_INC):
-                self.DMX_VALS_DISPS[i]["fg"] = "orange"
-            elif(g_ch_states_array[i] == c_CH_STATE_DEC):    
-                self.DMX_VALS_DISPS[i]["fg"] = "light blue"
-            elif(g_ch_states_array[i] == c_CH_STATE_CAPTURED):
-                self.DMX_VALS_DISPS[i]["fg"] = "yellow"
+        try:
+            for i in range(0, c_max_dmx_ch):
+                if(g_ch_states_array[i] == c_CH_STATE_NO_CHANGE):
+                    self.DMX_VALS_DISPS[i]["fg"] = "white"
+                elif(g_ch_states_array[i] == c_CH_STATE_INC):
+                    self.DMX_VALS_DISPS[i]["fg"] = "orange"
+                elif(g_ch_states_array[i] == c_CH_STATE_DEC):    
+                    self.DMX_VALS_DISPS[i]["fg"] = "light blue"
+                elif(g_ch_states_array[i] == c_CH_STATE_CAPTURED):
+                    self.DMX_VALS_DISPS[i]["fg"] = "yellow"
+        except:
+            print "something stupid happened while changing colors..."
 
     def update_displayed_vals(self):
         for i in range(0,c_max_dmx_ch):
@@ -482,11 +487,14 @@ def app_exit_graceful():
     global Timed_Thread_obj
     global app
     #set the TIMED kill variable, wait for it to end
-    g_kill_timed_thread = 1;
-    g_gui_access_lock.acquire(blocking=1); #block here until we have the lock
+    g_kill_timed_thread = 1
+    g_gui_access_lock.acquire(blocking=1) #block here until we have the lock
     #having the lock means the timed thread is not touching the gui, we can kill it at any time now
-    Timed_Thread_obj.join(); #wait for the timed thread to exit
-    root.destroy(); #kill the gui application. app.mainloop() should return now.
+    Timed_Thread_obj.join() #wait for the timed thread to exit
+    root.destroy() #kill the gui application.
+    g_ser_port.close() #close serial port
+    
+    #return to os at some point...
 
    
 ########################################################################
@@ -510,8 +518,11 @@ class Timed_Thread(threading.Thread):
         global g_sec_into_transition
         global g_kill_timed_thread
         global g_gui_access_lock
-        print "Starting " + self.name
+        
         timedif = 0
+        
+        time.sleep(1)#ensure GUI starts
+        print "Starting " + self.name
         while(g_kill_timed_thread != 1):
             time.sleep(c_sec_per_frame - timedif) #start by waiting
             starttime = datetime.datetime.now().microsecond #mark time we start the loop at
@@ -550,8 +561,16 @@ class Timed_Thread(threading.Thread):
           
 
             #tx current dmx frame
+            for i in range(0, c_max_dmx_ch):
+                if(g_cur_dmx_output[i] == 0x10):
+                    g_cur_dmx_output[i] = 0x11 #make sure we don't tx the start-of-frame char
+            chars_to_tx = ''.join(chr(b) for b in g_cur_dmx_output)
+            try:
+                g_ser_port.write('\x10') #write start byte
+                g_ser_port.write(chars_to_tx)
+            except:
+                print("Error while trying to write to serial port!!!")
             
-            #add serial tx here!!!!
 
             #calculate how well we did keeping time and correct for it
             endtime = datetime.datetime.now().microsecond #mark how long the timed loop took
@@ -631,6 +650,11 @@ root.config(menu=app.MENU_BAR) #set the top menu bar
 root.protocol("WM_DELETE_WINDOW", app_exit_graceful) #set custom close handle
 
 #initialize DMX Hardware
+try:
+    g_ser_port = serial.Serial(6, 115200)# Serial port COM7 on windows. We need a dynamic way of selecting...
+except:
+    print("Error opening serial port to DMX TX Module, is it plugged in and unused?")
+    sys.exit(-1)
 
 #run timed Thread
 g_state = c_STATE_STANDBY
