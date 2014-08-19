@@ -93,6 +93,14 @@ g_state = c_STATE_NOT_READY; #current state of the system
 #force kill of the application)
 g_gui_access_lock = threading.RLock()
 
+#state change atomicity lock - thinks like hitting the go and back buttons
+#change the state of the program, which requires some atomic actions.
+#Additionally, it is known that trying to do this while, say, updating
+#the colors on the GUI can cause some crashes. To prevent these, put
+#a lock so button-functions and GUI update functions won't run at the same
+#time.
+g_state_change_atomicity_lock = threading.Lock()
+
 ########################################################################
 ### END DATA
 ########################################################################
@@ -103,11 +111,12 @@ g_gui_access_lock = threading.RLock()
 #Cues are members in a python list
 #Each cue is a struct of the dmx values, the cue number, and the transition timing information
 class Cue:
-    def __init__(self, i_cue_num, i_dmx_vals,i_up_time, i_down_time):
+    def __init__(self, i_cue_num, i_dmx_vals,i_up_time, i_down_time, i_desc_str):
         self.CUE_NUM = copy.deepcopy(i_cue_num) #do nothing if we're in standby (steady state)
         self.DMX_VALS = copy.deepcopy(map(int,map(round,i_dmx_vals)))
         self.UP_TIME = copy.deepcopy(max(i_up_time, c_sec_per_frame)) #can't actually have zero transition time
         self.DOWN_TIME = copy.deepcopy(max(i_down_time, c_sec_per_frame)) #can't actually have zero transition time
+        self.DESCRIPTION = copy.deepcopy(i_desc_str)
         
 ########################################################################
 ### END CUE DEFINITION
@@ -118,52 +127,52 @@ class Cue:
 ########################################################################
 #the Cue List is a python list. These functions are used to insert or remove cues from the list
 
-def insert_cue(cue_num, dmx_vals,up_time, down_time):
+def insert_cue(cue_num, dmx_vals,up_time, down_time, desc_str):
     global g_cur_cue_index
     #case, insert only cue
     if(len(g_cue_list) == 0):
         print("Inserting cue into empty list")
-        g_cue_list.append(Cue(cue_num, dmx_vals,up_time,down_time))
+        g_cue_list.append(Cue(cue_num, dmx_vals,up_time,down_time,desc_str))
         g_cur_cue_index = 0
     #case, insert first cue
     elif(cue_num < g_cue_list[0].CUE_NUM):
         print("inserting cue into the first slot in the list")
-        g_cue_list.insert(0, Cue(cue_num,dmx_vals,up_time,down_time))
+        g_cue_list.insert(0, Cue(cue_num, dmx_vals,up_time,down_time,desc_str))
         g_cur_cue_index = 0
     #case, insert last cue
     elif(cue_num > g_cue_list[len(g_cue_list)-1].CUE_NUM):
         print("Inserting cue into last slot in list")
-        g_cue_list.append(Cue(cue_num,dmx_vals,up_time,down_time))
+        g_cue_list.append(Cue(cue_num, dmx_vals,up_time,down_time,desc_str))
         g_cur_cue_index = len(g_cue_list)-1
     #case, replace last cue
     elif(cue_num == g_cue_list[len(g_cue_list)-1].CUE_NUM):
         print("Overwriting last cue in list")
-        g_cue_list[len(g_cue_list)-1] = Cue(cue_num,dmx_vals,up_time,down_time)
+        g_cue_list[len(g_cue_list)-1] = Cue(cue_num, dmx_vals,up_time,down_time,desc_str)
         g_cur_cue_index = len(g_cue_list)-1
     #case, insert cue in middle of list
     else:
         for i in range(0,len(g_cue_list)-1):
     	    if(cue_num == g_cue_list[i].CUE_NUM):#case, overwrite existing cue
                 print("Overwriting Cue #" + str(g_cue_list[i].CUE_NUM))
-    	        g_cue_list[i] = Cue(cue_num,dmx_vals,up_time,down_time)
+    	        g_cue_list[i] = Cue(cue_num, dmx_vals,up_time,down_time,desc_str)
                 g_cur_cue_index = i
                 break
     	    elif(cue_num > g_cue_list[i].CUE_NUM and cue_num < g_cue_list[i+1].CUE_NUM):
                 print("Inserting cue after #" + str(g_cue_list[i].CUE_NUM) + " and before #" + str(g_cue_list[i+1].CUE_NUM))
-    	        g_cue_list.insert(i+1, Cue(cue_num,dmx_vals,up_time,down_time))
+    	        g_cue_list.insert(i+1, Cue(cue_num, dmx_vals,up_time,down_time,desc_str))
                 g_cur_cue_index = i+1
                 break
     print(len(g_cue_list))
          		   
  
 def remove_cue(cue_num):
-    for i in range(0,len(g_cue_list)): #linearlly traverse list until cue is found
+    for i in range(0,len(g_cue_list)): #linearly traverse list until cue is found
         if(g_cue_list[i].CUE_NUM == cue_num):
             print "removing cue..."
             g_cue_list.pop(i)
 
 def lookup_cue_index(cue_num):
-    for i in range(0,len(g_cue_list)): #linearlly traverse list until cue is found
+    for i in range(0,len(g_cue_list)): #linearly traverse list until cue is found
         if(g_cue_list[i].CUE_NUM == cue_num):
             return int(i)
     print "Cue " + str(cue_num) + " does not exist"
@@ -213,6 +222,8 @@ class Application(Frame):
         global g_cur_cue_index
         global g_state
         global g_sec_into_transition 
+        global g_state_change_atomicity_lock
+        g_state_change_atomicity_lock.acquire()
         l_temp = lookup_cue_index(g_entered_cue_num) #determine if the cue even exists, and what index it is
         if(l_temp != -1):
             print "Goto..."
@@ -220,51 +231,63 @@ class Application(Frame):
             self.set_ch_colors() 
             g_prev_dmx_output = copy.deepcopy(g_cur_dmx_output)
             g_cur_cue_index = l_temp
+            self.update_displayed_cue_list()
             g_sec_into_transition = 0.0        
             g_state = c_STATE_TRANSITION_FWD
+        g_state_change_atomicity_lock.release()
 
     def go_but_act(self):
         global g_prev_dmx_output
         global g_cur_cue_index
         global g_state
         global g_sec_into_transition
-        time.sleep(0.1) #try to prevent button-mashing bug
+        global g_state_change_atomicity_lock
+        g_state_change_atomicity_lock.acquire()
         if(g_cur_cue_index < len(g_cue_list)-1): 
             print "Go!"
             update_ch_states_array(g_cur_cue_index, g_cur_cue_index+1)
             self.set_ch_colors() 
             g_prev_dmx_output = copy.deepcopy(g_cur_dmx_output)
             g_cur_cue_index = g_cur_cue_index+1
+            self.update_displayed_cue_list()
             g_sec_into_transition = 0.0
             g_state = c_STATE_TRANSITION_FWD
+        g_state_change_atomicity_lock.release()
 
     def back_but_act(self):
         global g_prev_dmx_output
         global g_cur_cue_index
         global g_state
         global g_sec_into_transition
-        time.sleep(0.1) #try to prevent button-mashing bug
+        global g_state_change_atomicity_lock
+        g_state_change_atomicity_lock.acquire()
         if(g_cur_cue_index > 0):   
             print "Back..."
             update_ch_states_array(g_cur_cue_index, g_cur_cue_index-1)
             self.set_ch_colors() 
             g_prev_dmx_output = copy.deepcopy(g_cur_dmx_output)
             g_cur_cue_index = g_cur_cue_index-1
+            self.update_displayed_cue_list()
             g_state = c_STATE_TRANSITION_BKW
             g_sec_into_transition = 0.0
+        g_state_change_atomicity_lock.release()
     
     def record_cue_but_act(self):
         global g_prev_dmx_output
         global g_cur_cue_index
         global g_sec_into_transition
         global g_ch_states_array
+        global g_state_change_atomicity_lock
+        g_state_change_atomicity_lock.acquire()
         if(g_state == c_STATE_STANDBY):
            self.read_gui_input() #get current gui values
            #reset all ch states to NO-Change
            for i in range(0, c_max_dmx_ch):
                g_ch_states_array[i] = c_CH_STATE_NO_CHANGE
            self.set_ch_colors()
-           insert_cue(g_entered_cue_num, g_cur_dmx_output, g_entered_up_time, g_entered_down_time)
+           insert_cue(g_entered_cue_num, g_cur_dmx_output, g_entered_up_time, g_entered_down_time, "''")
+           self.update_displayed_cue_list()
+        g_state_change_atomicity_lock.release()
 
     def release_all_captured_ch(self):
         global g_ch_states_array
@@ -272,6 +295,8 @@ class Application(Frame):
         global g_cur_cue_index
         global g_cue_list
         global g_cur_dmx_output
+        global g_state_change_atomicity_lock
+        g_state_change_atomicity_lock.acquire()
         if(g_state == c_STATE_STANDBY):
             for i in range(0, c_max_dmx_ch):
                 if(g_ch_states_array[i] == c_CH_STATE_CAPTURED):
@@ -279,6 +304,8 @@ class Application(Frame):
                     g_ch_states_array[i] = c_CH_STATE_NO_CHANGE #reset ch state
             self.set_ch_colors()
             self.update_displayed_vals()
+            self.update_displayed_cue_list()
+        g_state_change_atomicity_lock.release()
           
     #GUI interaction functions 
     def read_gui_input(self): #actions to do whenever a text box is changed in the GUI
@@ -292,9 +319,9 @@ class Application(Frame):
         try:
             if(g_state == c_STATE_STANDBY):
                 g_prev_dmx_output = copy.deepcopy(g_cur_dmx_output)
-                g_entered_cue_num = abs(float(self.CUE_NUM_DISP_STR.get()))
-                g_entered_up_time = abs(float(self.CUE_TIME_UP_DISP_STR.get()))
-                g_entered_down_time = abs(float(self.CUE_TIME_DOWN_DISP_STR.get()))
+                g_entered_cue_num = min(round(abs(float(self.CUE_NUM_DISP_STR.get())),1),999.9)
+                g_entered_up_time = min(round(abs(float(self.CUE_TIME_UP_DISP_STR.get())),1), 99.9)
+                g_entered_down_time = min(round(abs(float(self.CUE_TIME_DOWN_DISP_STR.get())),1), 99.9)
                 for i in range(0,c_max_dmx_ch):
                     try: #sanitize inputs
                         g_cur_dmx_output[i]=max(0,min(abs(int(round(float(self.DMX_VALS_STRS[i].get())))),255))
@@ -310,6 +337,7 @@ class Application(Frame):
             self.set_ch_colors()
      
     def set_ch_colors(self):
+        global g_ch_states_array
         try:
             for i in range(0, c_max_dmx_ch):
                 if(g_ch_states_array[i] == c_CH_STATE_NO_CHANGE):
@@ -322,13 +350,38 @@ class Application(Frame):
                     self.DMX_VALS_DISPS[i]["fg"] = "yellow"
         except:
             print "something stupid happened while changing colors..."
-
+        
+    def update_displayed_cue_list(self):
+        l_new_string = ""
+        min_draw_cue_index = max(0,g_cur_cue_index-3)
+        max_draw_cue_index = min(min_draw_cue_index+10,len(g_cue_list)-1)
+        for cue_index_iter in range(min_draw_cue_index,max_draw_cue_index+1): 
+            if(cue_index_iter == g_cur_cue_index): #place marker if we're on this cue
+                l_new_string +=">"
+            else:
+                l_new_string += " "
+            
+            #write the cue number and up/dn time
+            l_new_string += "{: ^5.1f} | {: ^4.1f}/{: ^4.1f} | ".format(g_cue_list[cue_index_iter].CUE_NUM, g_cue_list[cue_index_iter].UP_TIME, g_cue_list[cue_index_iter].DOWN_TIME)
+            
+            #write the description
+            l_new_string += g_cue_list[cue_index_iter].DESCRIPTION
+            #newline
+            l_new_string += "\n"
+        
+        #end of list marker    
+        l_new_string += "--------------------------------------------------"
+        
+        #set the string
+        self.CUE_LIST_TEXT_STR.set(l_new_string)
+            
     def update_displayed_vals(self):
         for i in range(0,c_max_dmx_ch):
             self.DMX_VALS_STRS[i].set(str(int(g_cur_dmx_output[i])))
         self.CUE_NUM_DISP_STR.set(str(g_cue_list[g_cur_cue_index].CUE_NUM))
         self.CUE_TIME_UP_DISP_STR.set((g_cue_list[g_cur_cue_index].UP_TIME))
         self.CUE_TIME_DOWN_DISP_STR.set((g_cue_list[g_cur_cue_index].DOWN_TIME))
+
  
     #GUI Creation
     def create_widgets(self):
@@ -350,10 +403,16 @@ class Application(Frame):
         self.DMX_CH_LABELS = ['']*c_max_dmx_ch
         self.DMX_VALS_ROW_FRAMES = ['']*max_row
         
+        #dmx vals label
+        self.DMX_VALS_LABEL = Label(self.DMX_VALS_FRAME)
+        self.DMX_VALS_LABEL.grid(row = 0, column = 0)
+        self.DMX_VALS_LABEL["text"] = "DMX Output"
+        
+        
         #set up the per-row frames
         for i in range(0,max_row):
             self.DMX_VALS_ROW_FRAMES[i] = Frame(self.DMX_VALS_FRAME)
-            self.DMX_VALS_ROW_FRAMES[i].grid(row = i, column = 0)
+            self.DMX_VALS_ROW_FRAMES[i].grid(row = i+1, column = 0)
             self.DMX_VALS_ROW_FRAMES[i]["pady"] = 5
         
         #configure the grid
@@ -415,20 +474,52 @@ class Application(Frame):
         self.CUE_TIME_DOWN_DISP.grid(row=2, column=1)        
         self.CUE_TIME_DOWN_DISP_STR.set(str(g_entered_down_time))
         
-
- 
+        #define cue list frame and display
+        self.CUE_LIST_FRAME = Frame(root)
+        self.CUE_LIST_FRAME.grid(row = 1, column = 0)
+        self.CUE_LIST_FRAME["relief"] = "groove"
+        self.CUE_LIST_FRAME["bd"] = 3
+        
+        self.CUE_LIST_TEXT_LABEL1 = Label(self.CUE_LIST_FRAME)
+        self.CUE_LIST_TEXT_LABEL1.grid(row = 0, column = 0)
+        self.CUE_LIST_TEXT_LABEL1["text"] = "Cue List"
+        
+        self.CUE_LIST_TEXT_LABEL2 = Label(self.CUE_LIST_FRAME)
+        self.CUE_LIST_TEXT_LABEL2["justify"] = LEFT
+        self.CUE_LIST_TEXT_LABEL2.grid(row = 1, column = 0)
+        self.CUE_LIST_TEXT_LABEL2["width"] = 50
+        self.CUE_LIST_TEXT_LABEL2["anchor"] = W
+        self.CUE_LIST_TEXT_LABEL2["font"] = "TkFixedFont"
+        self.CUE_LIST_TEXT_LABEL2["text"] = " Cue  |  Up/Dn   |  Description"
+        
+        self.CUE_LIST_TEXT = Label(self.CUE_LIST_FRAME)
+        self.CUE_LIST_TEXT.grid(row = 2, column = 0)
+        self.CUE_LIST_TEXT_STR = StringVar()
+        self.CUE_LIST_TEXT["bg"] = "black"
+        self.CUE_LIST_TEXT["fg"] = "white"
+        self.CUE_LIST_TEXT["height"] = 10
+        self.CUE_LIST_TEXT["width"] = 50
+        self.CUE_LIST_TEXT["anchor"] = NW
+        self.CUE_LIST_TEXT["justify"] = LEFT
+        self.CUE_LIST_TEXT["font"] = "TkFixedFont"
+        self.CUE_LIST_TEXT["padx"] = 5
+        self.CUE_LIST_TEXT["pady"] = 5
+        self.CUE_LIST_TEXT["textvariable"] = self.CUE_LIST_TEXT_STR
+        self.CUE_LIST_TEXT_STR.set("TEST STRING WHICH IS 30 LONGAB\n------------------------------\n")
+        
+        
         #set up a frame for the programming buttons
-        self.PROG_BTNS = Frame(root)
-        self.PROG_BTNS.grid(row = 2, column = 1)
+        self.PROG_BTN_FRAME = Frame(root)
+        self.PROG_BTN_FRAME.grid(row = 2, column = 1)
         
         #define Record Cue Button
-        self.RECCUE = Button(self.PROG_BTNS)
+        self.RECCUE = Button(self.PROG_BTN_FRAME)
         self.RECCUE["text"] = "Record Cue"
         self.RECCUE["fg"]   = "black"
         self.RECCUE["command"] =  self.record_cue_but_act
         self.RECCUE.grid(row = 0, column = 0)
         
-        self.RELEASE_ALL = Button(self.PROG_BTNS)
+        self.RELEASE_ALL = Button(self.PROG_BTN_FRAME)
         self.RELEASE_ALL["text"] = "Release All"
         self.RELEASE_ALL["fg"]   = "black"
         self.RELEASE_ALL["command"] =  self.release_all_captured_ch
@@ -469,11 +560,12 @@ class Application(Frame):
         self.FILE_MENU.add_command(label = "Exit", command = app_exit_graceful)
         self.MENU_BAR.add_cascade(label = "File", menu = self.FILE_MENU)
                        
-    #I don't really know what this does, but it doesn't work without it. :(
+    #what to do when initalized...
     def __init__(self, master=None):
-        Frame.__init__(self, master)
-        self.grid()
-        self.create_widgets()
+        Frame.__init__(self, master) #make its own master frame
+        self.grid() #set in grid mode
+        self.create_widgets() #create everything within the frame
+        self.update_displayed_cue_list() #update displayed cue list (nowhere better to initalize this...)
 ########################################################################
 ### END APPLICATION DEFINITION
 ########################################################################
@@ -605,6 +697,7 @@ def open_show_file():
             g_cur_cue_index = 0
             snap_to_cue(g_cur_cue_index)
             app.update_displayed_vals()
+            app.update_displayed_cue_list()
 	    g_state = c_STATE_STANDBY
 
 def save_show_file():
@@ -622,9 +715,10 @@ def new_show():
     global g_cue_list
     print("Creating New Show!")
     init_global_data()
-    g_cue_list.append(Cue(0,[0]*c_max_dmx_ch,1,1))
+    g_cue_list.append(Cue(0,[0]*c_max_dmx_ch,1,1,"Put a short note here"))
     g_cur_cue_index = 0
     app.update_displayed_vals() #update the displayed vals on the screen
+    app.update_displayed_cue_list()
     g_state = c_STATE_STANDBY
 
 ########################################################################
@@ -639,7 +733,7 @@ def new_show():
 init_global_data()
 
 #set up cue list. default to empty
-g_cue_list.append(Cue(0,[0]*c_max_dmx_ch,1,1))
+g_cue_list.append(Cue(0,[0]*c_max_dmx_ch,1,1,"Put a short note here"))
 g_cur_cue_index = 0
 
 
