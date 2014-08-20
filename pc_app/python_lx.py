@@ -10,10 +10,11 @@
 ########################################################################
 ########################################################################
 from Tkinter import * #gui
+import tkSimpleDialog
 import tkFileDialog #file io dialogue boxes
 import cPickle #python object mashing for file io
 import serial #arduino communication
-import os, sys, math, threading, time, datetime, copy, array #system dependencies
+import os, sys, math, threading, time, datetime, copy, array, re #system dependencies
 
 
 ########################################################################
@@ -214,6 +215,8 @@ def snap_to_cue(cue_index):
 ########################################################################
 ### APPLICATION DEFINITION
 ########################################################################
+
+#main application
 class Application(Frame):
 
     #Button action definitions
@@ -381,6 +384,9 @@ class Application(Frame):
         self.CUE_NUM_DISP_STR.set(str(g_cue_list[g_cur_cue_index].CUE_NUM))
         self.CUE_TIME_UP_DISP_STR.set((g_cue_list[g_cur_cue_index].UP_TIME))
         self.CUE_TIME_DOWN_DISP_STR.set((g_cue_list[g_cur_cue_index].DOWN_TIME))
+        
+    def set_dmx_vals_but_act(self):
+        ChSetDialog(root, title = "Set DMX Vals")
 
  
     #GUI Creation
@@ -525,6 +531,12 @@ class Application(Frame):
         self.RELEASE_ALL["command"] =  self.release_all_captured_ch
         self.RELEASE_ALL.grid(row = 1, column = 0)
         
+        self.SET_CH_VALS = Button(self.PROG_BTN_FRAME)
+        self.SET_CH_VALS["text"] = "Set Ch..."
+        self.SET_CH_VALS["fg"]   = "black"
+        self.SET_CH_VALS["command"] = self.set_dmx_vals_but_act
+        self.SET_CH_VALS.grid(row = 2, column = 0)
+        
         #set up a frame for the show control buttons
         self.SHOW_CTRL_BTNS = Frame(root)
         self.SHOW_CTRL_BTNS.grid(row = 0, column = 1)
@@ -566,6 +578,69 @@ class Application(Frame):
         self.grid() #set in grid mode
         self.create_widgets() #create everything within the frame
         self.update_displayed_cue_list() #update displayed cue list (nowhere better to initialize this...)
+
+#channel set dialog box
+class ChSetDialog(tkSimpleDialog.Dialog):
+    def body(self, master):
+        Label(master, text="Enter Channel and Level").grid(row=0,column=0)
+        self.USER_ENTRY = Entry(master)
+        self.USER_ENTRY.grid(row = 1, column = 0)
+        return self.USER_ENTRY #initial focus
+        
+    def apply(self): #what to do when OK is hit - process user string to set channels accordingly.
+        #allowed entry syntax:
+        # <ch> * <val> - set ch to val
+        # <ch1>-<ch2> * <val> - set all channels between ch1 and ch2 inclusive to val (RANGE)
+        # <ch1>+<ch2>+<ch3> * <val> - set all of ch1, ch2, and ch3 to a val (AND)
+        # <ch1>-<ch2>+<ch3> * <val> - combo of AND/RANGE
+        # / * <val> - set all dmx channels to a val       
+        ch_to_set_list = [] #list of all channels we will want to set
+        input_str = "".join(str(self.USER_ENTRY.get()).split()) #remove all whitespace
+        (channels_str, part_char, val_str) = input_str.partition('*')
+        if(part_char != "*" or channels_str == "*"):
+            print("Syntax Error while setting ch values: input must have exactly one '*'")
+            return
+        else:
+            #attempt to read in dmx value to set
+            try:
+                dmx_val_to_set = max(0,min(abs(int(round(float(val_str)))),255)) #get and sanitize user input
+                print("setting to " + str(dmx_val_to_set))
+            except ValueError:
+                print("Error while trying to convert the value input to a dmx value")
+                return
+            #parse the channels to change
+            if(channels_str == "/"):
+                print("set all ch...")
+                #case, set all channels to val_str
+                #TODO
+            else:
+                ch_range_strs = re.findall("[0-9]{1,3}[-][[0-9]{1,3}",channels_str)
+                ch_and_strs = re.findall("[0-9]{1,3}",channels_str)
+                print(ch_range_strs) 
+                print(ch_and_strs)
+                
+                try:
+                    for str_iter in ch_range_strs:
+                        (lower_limit_str,upper_limit_str) = str_iter.split('-')
+                        upper_limit = max(2,min(abs(int(round(float(upper_limit_str)))),512))
+                        lower_limit = max(1,min(abs(int(round(float(lower_limit_str)))),512))
+                        if(upper_limit < lower_limit):
+                            print("Syntax Error while analyzing channel range: lower ch limit {} is larger than upper ch limit {}".format(lower_limit_str, upper_limit_str))
+                        for ch_num in range(lower_limit, upper_limit):
+                            ch_to_set_list.append(ch_num)
+                except ValueError:
+                    print("Syntax Error while trying to set ch values: {} is not recognized as a channel range".format(str(str_iter)))
+                    return
+                
+                try:
+                    for str_iter in ch_and_strs:
+                        ch_to_set_list.append(max(1,min(abs(int(round(float(str_iter)))),512)))
+                except ValueError:
+                    print("Syntax Error while trying to set ch values: {} is not recognized as a channel number".format(str(str_iter)))
+                    return
+                print(ch_to_set_list) 
+                #TODO Set Channels to value
+        
 ########################################################################
 ### END APPLICATION DEFINITION
 ########################################################################
