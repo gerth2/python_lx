@@ -10,7 +10,7 @@
 ########################################################################
 ########################################################################
 from Tkinter import * #gui
-import tkFileDialog #file io dialog boxes
+import tkFileDialog #file io dialogue boxes
 import cPickle #python object mashing for file io
 import serial #arduino communication
 import os, sys, math, threading, time, datetime, copy, array #system dependencies
@@ -35,7 +35,7 @@ c_CH_STATE_INC = 1
 c_CH_STATE_DEC = 2
 c_CH_STATE_CAPTURED = 3
 
-#Initalize global data
+#Initialize global data
 def init_global_data():
     #Variables which will be global:
     global g_cur_dmx_output
@@ -191,7 +191,7 @@ def print_cue(cue_num):
 
 def update_ch_states_array(prev_cue_index, next_cue_index):
     for i in range(0,c_max_dmx_ch):
-        if(g_ch_states_array[i] != c_CH_STATE_CAPTURED): #captured chanels should remain captured
+        if(g_ch_states_array[i] != c_CH_STATE_CAPTURED): #captured channels should remain captured
             if(g_cue_list[prev_cue_index].DMX_VALS[i] == g_cue_list[next_cue_index].DMX_VALS[i]):
                 g_ch_states_array[i] = c_CH_STATE_NO_CHANGE
             elif(g_cue_list[prev_cue_index].DMX_VALS[i] > g_cue_list[next_cue_index].DMX_VALS[i]):
@@ -565,7 +565,7 @@ class Application(Frame):
         Frame.__init__(self, master) #make its own master frame
         self.grid() #set in grid mode
         self.create_widgets() #create everything within the frame
-        self.update_displayed_cue_list() #update displayed cue list (nowhere better to initalize this...)
+        self.update_displayed_cue_list() #update displayed cue list (nowhere better to initialize this...)
 ########################################################################
 ### END APPLICATION DEFINITION
 ########################################################################
@@ -627,17 +627,17 @@ class Timed_Thread(threading.Thread):
                         g_cur_dmx_output[i] = int(round(float(g_prev_dmx_output[i])*(1.0-(g_sec_into_transition/g_cue_list[g_cur_cue_index].UP_TIME))+float(g_cue_list[g_cur_cue_index].DMX_VALS[i])*(g_sec_into_transition/g_cue_list[g_cur_cue_index].UP_TIME)))
 
                 #get the gui lock and update the displayed values               
-                while(g_gui_access_lock.acquire(blocking = 0) == False): #attempt to aquire the lock, spin on checking the kill_thread flag while waiting
-                    if(g_kill_timed_thread == 1): #if the lock is aquired, it means the main app is trying to exit. This thread should exit too then.
+                while(g_gui_access_lock.acquire(blocking = 0) == False): #attempt to acquire the lock, spin on checking the kill_thread flag while waiting
+                    if(g_kill_timed_thread == 1): #if the lock is acquired, it means the main app is trying to exit. This thread should exit too then.
                         return
                 app.update_displayed_vals() #update the displayed vals on the screen
                 g_gui_access_lock.release() #we're done here, release the lock
                  
-                #calculate the next state and approprate transition actions
+                #calculate the next state and appropriate transition actions
                 if(g_sec_into_transition >= g_cue_list[g_cur_cue_index].UP_TIME-c_sec_per_frame/2): #catch if the fade is done, and end it
                     g_state = c_STATE_STANDBY
                     g_sec_into_transition = 0
-                    for i in range(0,c_max_dmx_ch): #account for descrete timestep issues by ensuring the last loop in transition sets the outptus right
+                    for i in range(0,c_max_dmx_ch): #account for discrete timestep issues by ensuring the last loop in transition sets the outputs right
                         g_cur_dmx_output[i] = int(round(g_cue_list[g_cur_cue_index].DMX_VALS[i]))
                 else:
                     g_sec_into_transition = g_sec_into_transition + c_sec_per_frame #update how far we are through the fade
@@ -645,8 +645,8 @@ class Timed_Thread(threading.Thread):
 
             #if we're in standby, we should read the gui's values (user editable)
             elif(g_state == c_STATE_STANDBY):
-                while(g_gui_access_lock.acquire(blocking = 0)== False): #attempt to aquire the lock, spin on checking the kill_thread flag while waiting
-                    if(g_kill_timed_thread == 1): #if the lock is aquired, it means the main app is trying to exit. This thread should exit too then.
+                while(g_gui_access_lock.acquire(blocking = 0)== False): #attempt to acquire the lock, spin on checking the kill_thread flag while waiting
+                    if(g_kill_timed_thread == 1): #if the lock is acquired, it means the main app is trying to exit. This thread should exit too then.
                         return
                 app.read_gui_input() 
                 g_gui_access_lock.release() #we're done here, give up the lock
@@ -689,7 +689,7 @@ def open_show_file():
     global g_cur_cue_index
     if(g_state == c_STATE_STANDBY):
         g_state = c_STATE_NOT_READY
-        print("Opening...") #open default dialog box for file open
+        print("Opening...") #open default dialogue box for file open
         init_global_data()
         fname = tkFileDialog.askopenfilename(defaultextension = ".plx", filetypes = [("Show Files", ".plx"), ("All Files", "*")], title = "Open Show File")
 	if(fname != ''):
@@ -729,7 +729,7 @@ def new_show():
 ########################################################################
 ### MAIN FUNCTION
 ########################################################################
-#initalze interal data
+#initialize internal data
 init_global_data()
 
 #set up cue list. default to empty
