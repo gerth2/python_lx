@@ -431,12 +431,12 @@ class Application(Frame):
             self.DMX_CH_LABELS[i].grid(row=0, column=(i%c_dmx_disp_row_width))
             self.DMX_CH_LABELS[i]["width"] = 3
             self.DMX_VALS_STRS[i] = StringVar() #create a string variable for each box
-            self.DMX_VALS_DISPS[i] = Entry(self.DMX_VALS_ROW_FRAMES[int(math.floor(i/c_dmx_disp_row_width))], textvariable=self.DMX_VALS_STRS[i])
+            self.DMX_VALS_DISPS[i] = Label(self.DMX_VALS_ROW_FRAMES[int(math.floor(i/c_dmx_disp_row_width))], textvariable=self.DMX_VALS_STRS[i])
             self.DMX_VALS_DISPS[i]["bg"] = "black"
             self.DMX_VALS_DISPS[i]["fg"] = "white"
             self.DMX_VALS_DISPS[i]["width"] = 3
-            self.DMX_VALS_DISPS[i]["exportselection"] = 0 #don't copy to clipboard by default
-            self.DMX_VALS_DISPS[i]["selectbackground"] = "slate blue"
+            #self.DMX_VALS_DISPS[i]["exportselection"] = 0 #don't copy to clipboard by default
+            #self.DMX_VALS_DISPS[i]["selectbackground"] = "slate blue"
             self.DMX_VALS_STRS[i].set(str(g_cur_dmx_output[i])) #set default val for each box
             self.DMX_VALS_DISPS[i].grid(row=1, column=(i%c_dmx_disp_row_width))
         
@@ -611,13 +611,14 @@ class ChSetDialog(tkSimpleDialog.Dialog):
             #parse the channels to change
             if(channels_str == "/"):
                 print("set all ch...")
-                #case, set all channels to val_str
-                #TODO
+                for ch_iter in range(0, c_max_dmx_ch):
+                     g_cur_dmx_output[i] = dmx_val_to_set
+                     g_ch_states_array[i] = c_CH_STATE_CAPTURED
             else:
                 ch_range_strs = re.findall("[0-9]{1,3}[-][[0-9]{1,3}",channels_str)
                 ch_and_strs = re.findall("[0-9]{1,3}",channels_str)
-                print(ch_range_strs) 
-                print(ch_and_strs)
+                #print(ch_range_strs) 
+                #print(ch_and_strs)
                 
                 try:
                     for str_iter in ch_range_strs:
@@ -625,7 +626,7 @@ class ChSetDialog(tkSimpleDialog.Dialog):
                         upper_limit = max(2,min(abs(int(round(float(upper_limit_str)))),512))
                         lower_limit = max(1,min(abs(int(round(float(lower_limit_str)))),512))
                         if(upper_limit < lower_limit):
-                            print("Syntax Error while analyzing channel range: lower ch limit {} is larger than upper ch limit {}".format(lower_limit_str, upper_limit_str))
+                            print("Syntax Error while analysing channel range: lower ch limit {} is larger than upper ch limit {}".format(lower_limit_str, upper_limit_str))
                         for ch_num in range(lower_limit, upper_limit):
                             ch_to_set_list.append(ch_num)
                 except ValueError:
@@ -638,8 +639,17 @@ class ChSetDialog(tkSimpleDialog.Dialog):
                 except ValueError:
                     print("Syntax Error while trying to set ch values: {} is not recognized as a channel number".format(str(str_iter)))
                     return
-                print(ch_to_set_list) 
-                #TODO Set Channels to value
+                #print(ch_to_set_list)
+                #sanitize list
+                for ch_iter in range(0, len(ch_to_set_list)):
+                    ch_to_set_list[ch_iter] = max(1,min(abs(int(round(float(ch_to_set_list[ch_iter])))), c_max_dmx_ch))
+                #set channels    
+                for ch_iter in ch_to_set_list:
+                     g_cur_dmx_output[ch_iter-1] = dmx_val_to_set
+                     g_ch_states_array[ch_iter-1] = c_CH_STATE_CAPTURED
+            
+            app.update_displayed_vals()
+            app.set_ch_colors()
         
 ########################################################################
 ### END APPLICATION DEFINITION
@@ -719,13 +729,13 @@ class Timed_Thread(threading.Thread):
           
 
             #if we're in standby, we should read the gui's values (user editable)
-            elif(g_state == c_STATE_STANDBY):
-                while(g_gui_access_lock.acquire(blocking = 0)== False): #attempt to acquire the lock, spin on checking the kill_thread flag while waiting
-                    if(g_kill_timed_thread == 1): #if the lock is acquired, it means the main app is trying to exit. This thread should exit too then.
-                        return
-                app.read_gui_input() 
-                g_gui_access_lock.release() #we're done here, give up the lock
-          
+            #elif(g_state == c_STATE_STANDBY):
+                #while(g_gui_access_lock.acquire(blocking = 0)== False): #attempt to acquire the lock, spin on checking the kill_thread flag while waiting
+                #    if(g_kill_timed_thread == 1): #if the lock is acquired, it means the main app is trying to exit. This thread should exit too then.
+                #        return
+                ##app.read_gui_input() 
+                #g_gui_access_lock.release() #we're done here, give up the lock
+       
 
             #tx current dmx frame
             for i in range(0, c_max_dmx_ch):
