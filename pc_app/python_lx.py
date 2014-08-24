@@ -220,6 +220,18 @@ def snap_to_cue(cue_index):
             g_cur_dmx_output[i] = g_cue_list[cue_index].DMX_VALS[i]
         g_dmx_vals_lock.release()
         app.update_displayed_vals()
+
+#get a suggestion for the next cue number to use
+def get_next_available_cue_num(i_cur_cue_index):
+    if(i_cur_cue_index == len(g_cue_list) - 1):
+        return min(math.floor(g_cue_list[i_cur_cue_index].CUE_NUM + 1), 999.9)
+    if(i_cur_cue_index < len(g_cue_list)-1):
+        if(g_cue_list[i_cur_cue_index+1].CUE_NUM > g_cue_list[i_cur_cue_index].CUE_NUM + 1):
+            return math.floor(g_cue_list[i_cur_cue_index].CUE_NUM + 1)
+        elif(g_cue_list[i_cur_cue_index+1].CUE_NUM > g_cue_list[i_cur_cue_index].CUE_NUM + 0.2):
+            return round((g_cue_list[i_cur_cue_index+1].CUE_NUM + g_cue_list[i_cur_cue_index].CUE_NUM)/2, 1)
+    else:
+        return g_cue_list[i_cur_cue_index].CUE_NUM
 ########################################################################
 ### END CUE LIST FUNCTION DEFINITION
 ########################################################################
@@ -235,24 +247,8 @@ class Application(Frame):
 
     #Button action definitions
     def goto_but_act(self):
-        global g_prev_dmx_output
-        global g_cur_cue_index
-        global g_state
-        global g_sec_into_transition 
-        g_button_action_lock.acquire()
-        l_temp = lookup_cue_index(g_entered_cue_num) #determine if the cue even exists, and what index it is
-        if(l_temp != -1):
-            print "Goto..."
-            update_ch_states_array(g_cur_cue_index, l_temp)
-            self.set_ch_colors() 
-            g_dmx_vals_lock.acquire()
-            g_prev_dmx_output = copy.deepcopy(g_cur_dmx_output)
-            g_dmx_vals_lock.release()
-            g_cur_cue_index = l_temp
-            self.update_displayed_cue_list()
-            g_sec_into_transition = 0.0        
-            g_state = c_STATE_TRANSITION_FWD
-        g_button_action_lock.release()
+        GotoCueDialog(root, title = "GoTo Cue")
+
             
     def go_but_act(self):
         global g_prev_dmx_output
@@ -395,13 +391,13 @@ class Application(Frame):
         ChSetDialog(root, title = "Set DMX Vals")
 
     def keypress_handler(self, event):
-        g_button_action_lock.acquire()
         input = event.char
         if(input == "r"):
             RecCueDialog(root, title = "Record Cue")
         elif(input == "s"):
             ChSetDialog(root, title = "Set DMX Vals")
-        g_button_action_lock.release()
+        elif(input == "g"):
+            GotoCueDialog(root, title = "GoTo Cue")
             
     
  
@@ -416,7 +412,7 @@ class Application(Frame):
             max_col = int(c_max_dmx_ch)
         
         #keybindings
-        self.bind_all("<Key>", self.keypress_handler)
+        root.bind("<Key>", self.keypress_handler)
         
         #grab focus
         self.focus_set()
@@ -663,9 +659,11 @@ class ChSetDialog(tkSimpleDialog.Dialog):
                     ch_to_set_list[ch_iter] = max(1,min(abs(int(round(float(ch_to_set_list[ch_iter])))), c_max_dmx_ch))
                 #set channels    
                 g_dmx_vals_lock.acquire()
+                g_button_action_lock.acquire()
                 for ch_iter in ch_to_set_list:
                      g_cur_dmx_output[ch_iter-1] = dmx_val_to_set
                      g_ch_states_array[ch_iter-1] = c_CH_STATE_CAPTURED
+                g_button_action_lock.release()
                 g_dmx_vals_lock.release()
             
             app.update_displayed_vals()
@@ -674,42 +672,89 @@ class ChSetDialog(tkSimpleDialog.Dialog):
 #channel set dialog box
 class RecCueDialog(tkSimpleDialog.Dialog):
     def body(self, master):
-        Label(master, text="Enter Cue Number", width = 15).grid(row=0,column=0)
+        Label(master, text="Enter Cue Number", width = 15).grid(row=0,column=1)
         self.CUE_ENTRY = Entry(master)
         self.CUE_ENTRY["width"] = 5
-        self.CUE_ENTRY.grid(row = 1, column = 0)
+        self.CUE_ENTRY.grid(row = 1, column = 1)
+        self.CUE_ENTRY.insert(0,str(get_next_available_cue_num(g_cur_cue_index)))
         
-        Label(master, text="UpTime", width = 5).grid(row=2,column=0)
+        
+        Label(master, text="UpTime", width = 6).grid(row=0,column=0)
         self.UP_TIME_ENTRY = Entry(master)
         self.UP_TIME_ENTRY["width"] = 5
-        self.UP_TIME_ENTRY.grid(row = 3, column = 0)
+        self.UP_TIME_ENTRY.grid(row = 1, column = 0)
+        self.UP_TIME_ENTRY.insert(0,"1.0")
         
-        Label(master, text="DnTime", width = 5).grid(row=2,column=1)
+        Label(master, text="DnTime", width = 6).grid(row=0,column=2)
         self.DOWN_TIME_ENTRY = Entry(master)
         self.DOWN_TIME_ENTRY["width"] = 5
-        self.DOWN_TIME_ENTRY.grid(row = 3, column = 1)
+        self.DOWN_TIME_ENTRY.grid(row = 1, column = 2)
+        self.DOWN_TIME_ENTRY.insert(0,'1.0')
         
-        Label(master, text="Description", width = 15).grid(row=4,column=0)
+        Label(master, text="Description", width = 15).grid(row=3,column=1)
         self.CUE_DESC_ENTRY = Entry(master)
         self.CUE_DESC_ENTRY["width"] = 15
-        self.CUE_DESC_ENTRY.grid(row = 5, column = 0)
+        self.CUE_DESC_ENTRY.grid(row = 4, column = 1)
         
         return self.CUE_ENTRY #initial focus
         
     def apply(self):
         global g_ch_states_array
+        g_button_action_lock.acquire()
         if(g_state == c_STATE_STANDBY):
-           l_entered_cue_num = min(round(abs(float(self.CUE_ENTRY.get())),1),999.9)
-           l_entered_up_time = min(round(abs(float(self.UP_TIME_ENTRY.get())),1), 99.9)
-           l_entered_down_time = min(round(abs(float(self.DOWN_TIME_ENTRY.get())),1), 99.9)
-           l_entered_cue_desc = str(self.CUE_DESC_ENTRY.get())
-           #reset all ch states to NO-Change
-           for i in range(0, c_max_dmx_ch):
-               g_ch_states_array[i] = c_CH_STATE_NO_CHANGE
-           app.set_ch_colors()
-           insert_cue(l_entered_cue_num, g_cur_dmx_output, l_entered_up_time, l_entered_down_time, l_entered_cue_desc)
-           app.update_displayed_cue_list()
+            try:
+                l_entered_cue_num = min(round(abs(float(self.CUE_ENTRY.get())),1),999.9)
+                l_entered_up_time = min(round(abs(float(self.UP_TIME_ENTRY.get())),1), 99.9)
+                l_entered_down_time = min(round(abs(float(self.DOWN_TIME_ENTRY.get())),1), 99.9)
+                l_entered_cue_desc = str(self.CUE_DESC_ENTRY.get())
+            except ValueError:
+                print("Error, could not save cue because inputs were not numbers.")
+                g_button_action_lock.release()
+                return
+            #reset all ch states to NO-Change
+            for i in range(0, c_max_dmx_ch):
+                g_ch_states_array[i] = c_CH_STATE_NO_CHANGE
+            app.set_ch_colors()
+            insert_cue(l_entered_cue_num, g_cur_dmx_output, l_entered_up_time, l_entered_down_time, l_entered_cue_desc)
+            app.update_displayed_cue_list()
+        g_button_action_lock.release()
 
+class GotoCueDialog(tkSimpleDialog.Dialog):
+    def body(self, master):
+        Label(master, text="Goto Cue Number", width = 15).grid(row=0,column=0)
+        self.CUE_ENTRY = Entry(master)
+        self.CUE_ENTRY["width"] = 5
+        self.CUE_ENTRY.grid(row = 1, column = 0)
+
+        return self.CUE_ENTRY #initial focus
+        
+    def apply(self):
+        global g_prev_dmx_output
+        global g_cur_cue_index
+        global g_state
+        global g_sec_into_transition 
+        
+        g_button_action_lock.acquire()
+        try:
+            l_entered_cue_num = min(round(abs(float(self.CUE_ENTRY.get())),1),999.9)
+        except ValueError:
+            print("Error, could not go to cue because inputs were not numbers.")
+            g_button_action_lock.release()
+            return
+        l_temp = lookup_cue_index(l_entered_cue_num) #determine if the cue even exists, and what index it is
+        if(l_temp != -1):
+            print "Goto..."
+            update_ch_states_array(g_cur_cue_index, l_temp)
+            g_cur_cue_index = l_temp
+            app.set_ch_colors() 
+            g_dmx_vals_lock.acquire()
+            g_prev_dmx_output = copy.deepcopy(g_cur_dmx_output)
+            g_dmx_vals_lock.release()
+            g_cur_cue_index = l_temp
+            app.update_displayed_cue_list()
+            g_sec_into_transition = 0.0        
+            g_state = c_STATE_TRANSITION_FWD
+        g_button_action_lock.release()
         
 ########################################################################
 ### END APPLICATION DEFINITION
