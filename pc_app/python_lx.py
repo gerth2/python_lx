@@ -394,6 +394,16 @@ class Application(Frame):
     def set_dmx_vals_but_act(self):
         ChSetDialog(root, title = "Set DMX Vals")
 
+    def keypress_handler(self, event):
+        g_button_action_lock.acquire()
+        input = event.char
+        if(input == "r"):
+            RecCueDialog(root, title = "Record Cue")
+        elif(input == "s"):
+            ChSetDialog(root, title = "Set DMX Vals")
+        g_button_action_lock.release()
+            
+    
  
     #GUI Creation
     def create_widgets(self):
@@ -404,7 +414,13 @@ class Application(Frame):
             max_col = int(c_dmx_disp_row_width)
         else:
             max_col = int(c_max_dmx_ch)
-            
+        
+        #keybindings
+        self.bind_all("<Key>", self.keypress_handler)
+        
+        #grab focus
+        self.focus_set()
+        
         #define DMX vals display variables
         self.DMX_VALS_FRAME = Frame(self) #a frame to hold them all
         self.DMX_VALS_FRAME["bd"] = 3
@@ -451,36 +467,30 @@ class Application(Frame):
         self.CUE_NUM_DISP_LABEL = Label(self.CUE_INFO_FRAME, text = "Cue")
         self.CUE_NUM_DISP_LABEL.grid(row=0, column=0)
         self.CUE_NUM_DISP_STR = StringVar() #create a string variable for the cue number
-        self.CUE_NUM_DISP = Entry(self.CUE_INFO_FRAME, textvariable=self.CUE_NUM_DISP_STR)
+        self.CUE_NUM_DISP = Label(self.CUE_INFO_FRAME, textvariable=self.CUE_NUM_DISP_STR)
         self.CUE_NUM_DISP["bg"] = "navy"
         self.CUE_NUM_DISP["fg"] = "white"
         self.CUE_NUM_DISP["width"] = 4
-        self.CUE_NUM_DISP["exportselection"] = 0 #don't copy to clipboard by default
-        self.CUE_NUM_DISP["selectbackground"] = "slate blue"
         self.CUE_NUM_DISP.grid(row=0, column=1)
         self.CUE_NUM_DISP_STR.set(str(g_entered_cue_num))
         
         self.CUE_TIME_UP_DISP_LABEL = Label(self.CUE_INFO_FRAME, text = "Time Up")
         self.CUE_TIME_UP_DISP_LABEL.grid(row=1, column=0) 
         self.CUE_TIME_UP_DISP_STR = StringVar() #create a string variable for the cue number        
-        self.CUE_TIME_UP_DISP = Entry(self.CUE_INFO_FRAME, textvariable=self.CUE_TIME_UP_DISP_STR)
+        self.CUE_TIME_UP_DISP = Label(self.CUE_INFO_FRAME, textvariable=self.CUE_TIME_UP_DISP_STR)
         self.CUE_TIME_UP_DISP["bg"] = "navy"
         self.CUE_TIME_UP_DISP["fg"] = "white"
         self.CUE_TIME_UP_DISP["width"] = 4
-        self.CUE_TIME_UP_DISP["exportselection"] = 0 #don't copy to clipboard by default
-        self.CUE_TIME_UP_DISP["selectbackground"] = "slate blue"
         self.CUE_TIME_UP_DISP.grid(row=1, column=1)        
         self.CUE_TIME_UP_DISP_STR.set(str(g_entered_up_time))
        
         self.CUE_TIME_DOWN_DISP_LABEL = Label(self.CUE_INFO_FRAME, text = "Time Down")
         self.CUE_TIME_DOWN_DISP_LABEL.grid(row=2, column=0) 
         self.CUE_TIME_DOWN_DISP_STR = StringVar() #create a string variable for the cue number        
-        self.CUE_TIME_DOWN_DISP = Entry(self.CUE_INFO_FRAME, textvariable=self.CUE_TIME_DOWN_DISP_STR)
+        self.CUE_TIME_DOWN_DISP = Label(self.CUE_INFO_FRAME, textvariable=self.CUE_TIME_DOWN_DISP_STR)
         self.CUE_TIME_DOWN_DISP["bg"] = "navy"
         self.CUE_TIME_DOWN_DISP["fg"] = "white"
         self.CUE_TIME_DOWN_DISP["width"] = 4
-        self.CUE_TIME_DOWN_DISP["exportselection"] = 0 #don't copy to clipboard by default
-        self.CUE_TIME_DOWN_DISP["selectbackground"] = "slate blue"
         self.CUE_TIME_DOWN_DISP.grid(row=2, column=1)        
         self.CUE_TIME_DOWN_DISP_STR.set(str(g_entered_down_time))
         
