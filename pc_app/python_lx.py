@@ -77,6 +77,12 @@ g_kill_timed_thread = 0; #set to 1 on exit
 g_sec_into_transition = 0.0;
 g_state = c_STATE_NOT_READY; #current state of the system
 
+#so this is technically multithreaded. And has shared resources. Which
+#implies the need for some sort of locking strategy. I suppose in the 
+#future I can do a more rigorous analysis of the locking requirements.
+#but I'm a EE who likes getting things done. So for now we're using the
+#"wait for bug to occur and then lock until it goes away" analysis method.
+
 #gui access lock - used to facilitate clean shutdowns between threads
 #whenever the timed thread accesses the gui, it should get this lock 
 #first. As it is the only thing grabbing the lock normally, this 
@@ -94,8 +100,19 @@ g_state = c_STATE_NOT_READY; #current state of the system
 #force kill of the application)
 g_gui_access_lock = threading.RLock()
 
-#attmpt to fix bug where we need atomic access to g_cur_dmx_vals
+#Technically, any variable touched by the real-time thread needs to have
+#a lock on it to ensure two threads aren't touching the same piece of
+#data at the same time. Although python should make these accesses serially,
+#it seems that putting tkinter into the mix screws some things up. In the interest
+#of going for low-hanging fruit first, most of the crashes seem to be fixed when 
+#we simply lock the g_cur_dmx_output variable. Every write (and most of the reads)
+#to g_cur_dmx_output will be surrounded by a lock and guaranteed atomic.
 g_dmx_vals_lock = threading.Lock()
+
+#turns out it's also good to lock when resources shared by button action functions
+#and timed loop. This seems to be the source of the illusive button-mashing bug.
+g_button_action_lock = threading.Lock()
+
 
 ########################################################################
 ### END DATA
@@ -196,10 +213,12 @@ def update_ch_states_array(prev_cue_index, next_cue_index):
                 g_ch_states_array[i] = c_CH_STATE_INC
 
 def snap_to_cue(cue_index):
-    global g_cur_dmx_vals
+    global g_cur_dmx_output
     if(cue_index >= 0 and cue_index < len(g_cue_list)-1):
+        g_dmx_vals_lock.acquire()
         for i in range(0, c_max_dmx_ch):
             g_cur_dmx_output[i] = g_cue_list[cue_index].DMX_VALS[i]
+        g_dmx_vals_lock.release()
         app.update_displayed_vals()
 ########################################################################
 ### END CUE LIST FUNCTION DEFINITION
@@ -220,46 +239,58 @@ class Application(Frame):
         global g_cur_cue_index
         global g_state
         global g_sec_into_transition 
+        g_button_action_lock.acquire()
         l_temp = lookup_cue_index(g_entered_cue_num) #determine if the cue even exists, and what index it is
         if(l_temp != -1):
             print "Goto..."
             update_ch_states_array(g_cur_cue_index, l_temp)
             self.set_ch_colors() 
+            g_dmx_vals_lock.acquire()
             g_prev_dmx_output = copy.deepcopy(g_cur_dmx_output)
+            g_dmx_vals_lock.release()
             g_cur_cue_index = l_temp
             self.update_displayed_cue_list()
             g_sec_into_transition = 0.0        
             g_state = c_STATE_TRANSITION_FWD
+        g_button_action_lock.release()
             
     def go_but_act(self):
         global g_prev_dmx_output
         global g_cur_cue_index
         global g_state
         global g_sec_into_transition
+        g_button_action_lock.acquire()
         if(g_cur_cue_index < len(g_cue_list)-1): 
             print "Go!"
             update_ch_states_array(g_cur_cue_index, g_cur_cue_index+1)
             self.set_ch_colors() 
+            g_dmx_vals_lock.acquire()
             g_prev_dmx_output = copy.deepcopy(g_cur_dmx_output)
+            g_dmx_vals_lock.release()
             g_cur_cue_index = g_cur_cue_index+1
             self.update_displayed_cue_list()
             g_sec_into_transition = 0.0
             g_state = c_STATE_TRANSITION_FWD
+        g_button_action_lock.release()
 
     def back_but_act(self):
         global g_prev_dmx_output
         global g_cur_cue_index
         global g_state
         global g_sec_into_transition
+        g_button_action_lock.acquire()
         if(g_cur_cue_index > 0):   
             print "Back..."
             update_ch_states_array(g_cur_cue_index, g_cur_cue_index-1)
             self.set_ch_colors() 
+            g_dmx_vals_lock.acquire()
             g_prev_dmx_output = copy.deepcopy(g_cur_dmx_output)
+            g_dmx_vals_lock.release()
             g_cur_cue_index = g_cur_cue_index-1
             self.update_displayed_cue_list()
             g_state = c_STATE_TRANSITION_BKW
             g_sec_into_transition = 0.0
+        g_button_action_lock.release()
     
     def record_cue_but_act(self):
         RecCueDialog(root, title = "Record Cue")
@@ -270,14 +301,18 @@ class Application(Frame):
         global g_cur_cue_index
         global g_cue_list
         global g_cur_dmx_output
+        g_button_action_lock.acquire()
         if(g_state == c_STATE_STANDBY):
+            g_dmx_vals_lock.acquire()
             for i in range(0, c_max_dmx_ch):
                 if(g_ch_states_array[i] == c_CH_STATE_CAPTURED):
                     g_cur_dmx_output[i] = g_cue_list[g_cur_cue_index].DMX_VALS[i] #restore old value
                     g_ch_states_array[i] = c_CH_STATE_NO_CHANGE #reset ch state
+            g_dmx_vals_lock.release()
             self.set_ch_colors()
             self.update_displayed_vals()
             self.update_displayed_cue_list()
+        g_button_action_lock.release()
           
     #GUI interaction functions 
     # def read_gui_input(self): #actions to do whenever a text box is changed in the GUI
@@ -309,20 +344,19 @@ class Application(Frame):
             # self.set_ch_colors()
      
     def set_ch_colors(self):
-        return
-        # global g_ch_states_array
-        # try:
-            # for i in range(0, c_max_dmx_ch):
-                # if(g_ch_states_array[i] == c_CH_STATE_NO_CHANGE):
-                    # self.DMX_VALS_DISPS[i]["fg"] = "white"
-                # elif(g_ch_states_array[i] == c_CH_STATE_INC):
-                    # self.DMX_VALS_DISPS[i]["fg"] = "orange"
-                # elif(g_ch_states_array[i] == c_CH_STATE_DEC):    
-                    # self.DMX_VALS_DISPS[i]["fg"] = "light blue"
-                # elif(g_ch_states_array[i] == c_CH_STATE_CAPTURED):
-                    # self.DMX_VALS_DISPS[i]["fg"] = "yellow"
-        # except:
-            # print "something stupid happened while changing colors..."
+        global g_ch_states_array
+        try:
+            for i in range(0, c_max_dmx_ch):
+                if(g_ch_states_array[i] == c_CH_STATE_NO_CHANGE):
+                    self.DMX_VALS_DISPS[i]["fg"] = "white"
+                elif(g_ch_states_array[i] == c_CH_STATE_INC):
+                    self.DMX_VALS_DISPS[i]["fg"] = "orange"
+                elif(g_ch_states_array[i] == c_CH_STATE_DEC):    
+                    self.DMX_VALS_DISPS[i]["fg"] = "light blue"
+                elif(g_ch_states_array[i] == c_CH_STATE_CAPTURED):
+                    self.DMX_VALS_DISPS[i]["fg"] = "yellow"
+        except:
+            print "something stupid happened while changing colors..."
         
     def update_displayed_cue_list(self):
         l_new_string = ""
@@ -349,8 +383,10 @@ class Application(Frame):
         self.CUE_LIST_TEXT_STR.set(l_new_string)
             
     def update_displayed_vals(self):
+        g_dmx_vals_lock.acquire()
         for i in range(0,c_max_dmx_ch):
             self.DMX_VALS_STRS[i].set(str(int(g_cur_dmx_output[i])))
+        g_dmx_vals_lock.release()
         self.CUE_NUM_DISP_STR.set(str(g_cue_list[g_cur_cue_index].CUE_NUM))
         self.CUE_TIME_UP_DISP_STR.set((g_cue_list[g_cur_cue_index].UP_TIME))
         self.CUE_TIME_DOWN_DISP_STR.set((g_cue_list[g_cur_cue_index].DOWN_TIME))
@@ -405,8 +441,6 @@ class Application(Frame):
             self.DMX_VALS_DISPS[i]["bg"] = "black"
             self.DMX_VALS_DISPS[i]["fg"] = "white"
             self.DMX_VALS_DISPS[i]["width"] = 3
-            #self.DMX_VALS_DISPS[i]["exportselection"] = 0 #don't copy to clipboard by default
-            #self.DMX_VALS_DISPS[i]["selectbackground"] = "slate blue"
             self.DMX_VALS_STRS[i].set(str(g_cur_dmx_output[i])) #set default val for each box
             self.DMX_VALS_DISPS[i].grid(row=1, column=(i%c_dmx_disp_row_width))
         
@@ -581,9 +615,11 @@ class ChSetDialog(tkSimpleDialog.Dialog):
             #parse the channels to change
             if(channels_str == "/"):
                 print("set all ch...")
+                g_dmx_vals_lock.acquire()
                 for ch_iter in range(0, c_max_dmx_ch):
                      g_cur_dmx_output[i] = dmx_val_to_set
                      g_ch_states_array[i] = c_CH_STATE_CAPTURED
+                g_dmx_vals_lock.release()
             else:
                 ch_range_strs = re.findall("[0-9]{1,3}[-][[0-9]{1,3}",channels_str)
                 ch_and_strs = re.findall("[0-9]{1,3}",channels_str)
@@ -616,9 +652,11 @@ class ChSetDialog(tkSimpleDialog.Dialog):
                 for ch_iter in range(0, len(ch_to_set_list)):
                     ch_to_set_list[ch_iter] = max(1,min(abs(int(round(float(ch_to_set_list[ch_iter])))), c_max_dmx_ch))
                 #set channels    
+                g_dmx_vals_lock.acquire()
                 for ch_iter in ch_to_set_list:
                      g_cur_dmx_output[ch_iter-1] = dmx_val_to_set
                      g_ch_states_array[ch_iter-1] = c_CH_STATE_CAPTURED
+                g_dmx_vals_lock.release()
             
             app.update_displayed_vals()
             app.set_ch_colors()
@@ -719,23 +757,30 @@ class Timed_Thread(threading.Thread):
            
             #if we're transitioning, the current dmx frame is dependant on how long we've been transitioning 
             if(g_state == c_STATE_TRANSITION_FWD or g_state == c_STATE_TRANSITION_BKW):
+                g_dmx_vals_lock.acquire()
                 for i in range(0, c_max_dmx_ch): #calculate each dmx value based on how far we are through the fade
                     if(g_ch_states_array[i] != c_CH_STATE_CAPTURED): #captured channels should not change
                         g_cur_dmx_output[i] = int(round(float(g_prev_dmx_output[i])*(1.0-(g_sec_into_transition/g_cue_list[g_cur_cue_index].UP_TIME))+float(g_cue_list[g_cur_cue_index].DMX_VALS[i])*(g_sec_into_transition/g_cue_list[g_cur_cue_index].UP_TIME)))
+                g_dmx_vals_lock.release()
                 
                 #get the gui lock and update the displayed values               
                 while(g_gui_access_lock.acquire(blocking = 0) == False): #attempt to acquire the lock, spin on checking the kill_thread flag while waiting
                     if(g_kill_timed_thread == 1): #if the lock is acquired, it means the main app is trying to exit. This thread should exit too then.
                         return
+                g_button_action_lock.acquire()
                 app.update_displayed_vals() #update the displayed vals on the screen
+                g_button_action_lock.release()
                 g_gui_access_lock.release() #we're done here, release the lock
                  
                 #calculate the next state and appropriate transition actions
                 if(g_sec_into_transition >= g_cue_list[g_cur_cue_index].UP_TIME-c_sec_per_frame/2): #catch if the fade is done, and end it
                     g_state = c_STATE_STANDBY
                     g_sec_into_transition = 0
+                    g_dmx_vals_lock.acquire()
                     for i in range(0,c_max_dmx_ch): #account for discrete timestep issues by ensuring the last loop in transition sets the outputs right
-                        g_cur_dmx_output[i] = int(round(g_cue_list[g_cur_cue_index].DMX_VALS[i]))
+                        if(g_ch_states_array[i] != c_CH_STATE_CAPTURED):
+                            g_cur_dmx_output[i] = int(round(g_cue_list[g_cur_cue_index].DMX_VALS[i]))
+                    g_dmx_vals_lock.release()
                 else:
                     g_sec_into_transition = g_sec_into_transition + c_sec_per_frame #update how far we are through the fade
           
@@ -752,7 +797,9 @@ class Timed_Thread(threading.Thread):
             #tx current dmx frame
             for i in range(0, c_max_dmx_ch):
                 if(g_cur_dmx_output[i] == 0x10):
+                    g_dmx_vals_lock.acquire()
                     g_cur_dmx_output[i] = 0x11 #make sure we don't tx the start-of-frame char
+                    g_dmx_vals_lock.release()
             chars_to_tx = ''.join(chr(b) for b in g_cur_dmx_output)
             try:
                g_ser_port.write('\x10') #write start byte
