@@ -94,13 +94,8 @@ g_state = c_STATE_NOT_READY; #current state of the system
 #force kill of the application)
 g_gui_access_lock = threading.RLock()
 
-#state change atomicity lock - thinks like hitting the go and back buttons
-#change the state of the program, which requires some atomic actions.
-#Additionally, it is known that trying to do this while, say, updating
-#the colors on the GUI can cause some crashes. To prevent these, put
-#a lock so button-functions and GUI update functions won't run at the same
-#time.
-g_state_change_atomicity_lock = threading.Lock()
+#attmpt to fix bug where we need atomic access to g_cur_dmx_vals
+g_dmx_vals_lock = threading.Lock()
 
 ########################################################################
 ### END DATA
@@ -225,8 +220,6 @@ class Application(Frame):
         global g_cur_cue_index
         global g_state
         global g_sec_into_transition 
-        global g_state_change_atomicity_lock
-        g_state_change_atomicity_lock.acquire()
         l_temp = lookup_cue_index(g_entered_cue_num) #determine if the cue even exists, and what index it is
         if(l_temp != -1):
             print "Goto..."
@@ -237,15 +230,12 @@ class Application(Frame):
             self.update_displayed_cue_list()
             g_sec_into_transition = 0.0        
             g_state = c_STATE_TRANSITION_FWD
-        g_state_change_atomicity_lock.release()
-
+            
     def go_but_act(self):
         global g_prev_dmx_output
         global g_cur_cue_index
         global g_state
         global g_sec_into_transition
-        global g_state_change_atomicity_lock
-        g_state_change_atomicity_lock.acquire()
         if(g_cur_cue_index < len(g_cue_list)-1): 
             print "Go!"
             update_ch_states_array(g_cur_cue_index, g_cur_cue_index+1)
@@ -255,15 +245,12 @@ class Application(Frame):
             self.update_displayed_cue_list()
             g_sec_into_transition = 0.0
             g_state = c_STATE_TRANSITION_FWD
-        g_state_change_atomicity_lock.release()
 
     def back_but_act(self):
         global g_prev_dmx_output
         global g_cur_cue_index
         global g_state
         global g_sec_into_transition
-        global g_state_change_atomicity_lock
-        g_state_change_atomicity_lock.acquire()
         if(g_cur_cue_index > 0):   
             print "Back..."
             update_ch_states_array(g_cur_cue_index, g_cur_cue_index-1)
@@ -273,24 +260,9 @@ class Application(Frame):
             self.update_displayed_cue_list()
             g_state = c_STATE_TRANSITION_BKW
             g_sec_into_transition = 0.0
-        g_state_change_atomicity_lock.release()
     
     def record_cue_but_act(self):
-        global g_prev_dmx_output
-        global g_cur_cue_index
-        global g_sec_into_transition
-        global g_ch_states_array
-        global g_state_change_atomicity_lock
-        g_state_change_atomicity_lock.acquire()
-        if(g_state == c_STATE_STANDBY):
-           self.read_gui_input() #get current gui values
-           #reset all ch states to NO-Change
-           for i in range(0, c_max_dmx_ch):
-               g_ch_states_array[i] = c_CH_STATE_NO_CHANGE
-           self.set_ch_colors()
-           insert_cue(g_entered_cue_num, g_cur_dmx_output, g_entered_up_time, g_entered_down_time, "''")
-           self.update_displayed_cue_list()
-        g_state_change_atomicity_lock.release()
+        RecCueDialog(root, title = "Record Cue")
 
     def release_all_captured_ch(self):
         global g_ch_states_array
@@ -298,8 +270,6 @@ class Application(Frame):
         global g_cur_cue_index
         global g_cue_list
         global g_cur_dmx_output
-        global g_state_change_atomicity_lock
-        g_state_change_atomicity_lock.acquire()
         if(g_state == c_STATE_STANDBY):
             for i in range(0, c_max_dmx_ch):
                 if(g_ch_states_array[i] == c_CH_STATE_CAPTURED):
@@ -308,51 +278,51 @@ class Application(Frame):
             self.set_ch_colors()
             self.update_displayed_vals()
             self.update_displayed_cue_list()
-        g_state_change_atomicity_lock.release()
           
     #GUI interaction functions 
-    def read_gui_input(self): #actions to do whenever a text box is changed in the GUI
-        global g_cur_dmx_output
-        global g_prev_dmx_output
-        global g_entered_cue_num
-        global g_entered_up_time
-        global g_entered_down_time
-        global g_ch_states_array
-        l_update_colors = 0
-        try:
-            if(g_state == c_STATE_STANDBY):
-                g_prev_dmx_output = copy.deepcopy(g_cur_dmx_output)
-                g_entered_cue_num = min(round(abs(float(self.CUE_NUM_DISP_STR.get())),1),999.9)
-                g_entered_up_time = min(round(abs(float(self.CUE_TIME_UP_DISP_STR.get())),1), 99.9)
-                g_entered_down_time = min(round(abs(float(self.CUE_TIME_DOWN_DISP_STR.get())),1), 99.9)
-                for i in range(0,c_max_dmx_ch):
-                    try: #sanitize inputs
-                        g_cur_dmx_output[i]=max(0,min(abs(int(round(float(self.DMX_VALS_STRS[i].get())))),255))
-                        if(g_cur_dmx_output[i] != g_prev_dmx_output[i]):
-                            print("ch"+str(i)+" has changed")
-                            l_update_colors = 1
-                            g_ch_states_array[i] = c_CH_STATE_CAPTURED
-                    except ValueError:
-                        print "Val Error reading from GUI"
-        except ValueError:
-            print"Val Error Reading from GUI"
-        if(l_update_colors == 1):
-            self.set_ch_colors()
+    # def read_gui_input(self): #actions to do whenever a text box is changed in the GUI
+        # global g_cur_dmx_output
+        # global g_prev_dmx_output
+        # global g_entered_cue_num
+        # global g_entered_up_time
+        # global g_entered_down_time
+        # global g_ch_states_array
+        # l_update_colors = 0
+        # try:
+            # if(g_state == c_STATE_STANDBY):
+                # g_prev_dmx_output = copy.deepcopy(g_cur_dmx_output)
+                # g_entered_cue_num = min(round(abs(float(self.CUE_NUM_DISP_STR.get())),1),999.9)
+                # g_entered_up_time = min(round(abs(float(self.CUE_TIME_UP_DISP_STR.get())),1), 99.9)
+                # g_entered_down_time = min(round(abs(float(self.CUE_TIME_DOWN_DISP_STR.get())),1), 99.9)
+                # for i in range(0,c_max_dmx_ch):
+                    # try: #sanitize inputs
+                        # g_cur_dmx_output[i]=max(0,min(abs(int(round(float(self.DMX_VALS_STRS[i].get())))),255))
+                        # if(g_cur_dmx_output[i] != g_prev_dmx_output[i]):
+                            # print("ch"+str(i)+" has changed")
+                            # l_update_colors = 1
+                            # g_ch_states_array[i] = c_CH_STATE_CAPTURED
+                    # except ValueError:
+                        # print "Val Error reading from GUI"
+        # except ValueError:
+            # print"Val Error Reading from GUI"
+        # if(l_update_colors == 1):
+            # self.set_ch_colors()
      
     def set_ch_colors(self):
-        global g_ch_states_array
-        try:
-            for i in range(0, c_max_dmx_ch):
-                if(g_ch_states_array[i] == c_CH_STATE_NO_CHANGE):
-                    self.DMX_VALS_DISPS[i]["fg"] = "white"
-                elif(g_ch_states_array[i] == c_CH_STATE_INC):
-                    self.DMX_VALS_DISPS[i]["fg"] = "orange"
-                elif(g_ch_states_array[i] == c_CH_STATE_DEC):    
-                    self.DMX_VALS_DISPS[i]["fg"] = "light blue"
-                elif(g_ch_states_array[i] == c_CH_STATE_CAPTURED):
-                    self.DMX_VALS_DISPS[i]["fg"] = "yellow"
-        except:
-            print "something stupid happened while changing colors..."
+        return
+        # global g_ch_states_array
+        # try:
+            # for i in range(0, c_max_dmx_ch):
+                # if(g_ch_states_array[i] == c_CH_STATE_NO_CHANGE):
+                    # self.DMX_VALS_DISPS[i]["fg"] = "white"
+                # elif(g_ch_states_array[i] == c_CH_STATE_INC):
+                    # self.DMX_VALS_DISPS[i]["fg"] = "orange"
+                # elif(g_ch_states_array[i] == c_CH_STATE_DEC):    
+                    # self.DMX_VALS_DISPS[i]["fg"] = "light blue"
+                # elif(g_ch_states_array[i] == c_CH_STATE_CAPTURED):
+                    # self.DMX_VALS_DISPS[i]["fg"] = "yellow"
+        # except:
+            # print "something stupid happened while changing colors..."
         
     def update_displayed_cue_list(self):
         l_new_string = ""
@@ -511,7 +481,7 @@ class Application(Frame):
         self.CUE_LIST_TEXT["padx"] = 5
         self.CUE_LIST_TEXT["pady"] = 5
         self.CUE_LIST_TEXT["textvariable"] = self.CUE_LIST_TEXT_STR
-        self.CUE_LIST_TEXT_STR.set("TEST STRING WHICH IS 30 LONGAB\n------------------------------\n")
+        self.CUE_LIST_TEXT_STR.set("")
         
         
         #set up a frame for the programming buttons
@@ -625,8 +595,10 @@ class ChSetDialog(tkSimpleDialog.Dialog):
                         (lower_limit_str,upper_limit_str) = str_iter.split('-')
                         upper_limit = max(2,min(abs(int(round(float(upper_limit_str)))),512))
                         lower_limit = max(1,min(abs(int(round(float(lower_limit_str)))),512))
-                        if(upper_limit < lower_limit):
-                            print("Syntax Error while analysing channel range: lower ch limit {} is larger than upper ch limit {}".format(lower_limit_str, upper_limit_str))
+                        if(upper_limit < lower_limit): #if the user enters them backwards, that's ok, just flip them
+                            temp = upper_limit
+                            upper_limit = lower_limit
+                            lower_limit = temp
                         for ch_num in range(lower_limit, upper_limit):
                             ch_to_set_list.append(ch_num)
                 except ValueError:
@@ -651,6 +623,46 @@ class ChSetDialog(tkSimpleDialog.Dialog):
             app.update_displayed_vals()
             app.set_ch_colors()
         
+#channel set dialog box
+class RecCueDialog(tkSimpleDialog.Dialog):
+    def body(self, master):
+        Label(master, text="Enter Cue Number", width = 15).grid(row=0,column=0)
+        self.CUE_ENTRY = Entry(master)
+        self.CUE_ENTRY["width"] = 5
+        self.CUE_ENTRY.grid(row = 1, column = 0)
+        
+        Label(master, text="UpTime", width = 5).grid(row=2,column=0)
+        self.UP_TIME_ENTRY = Entry(master)
+        self.UP_TIME_ENTRY["width"] = 5
+        self.UP_TIME_ENTRY.grid(row = 3, column = 0)
+        
+        Label(master, text="DnTime", width = 5).grid(row=2,column=1)
+        self.DOWN_TIME_ENTRY = Entry(master)
+        self.DOWN_TIME_ENTRY["width"] = 5
+        self.DOWN_TIME_ENTRY.grid(row = 3, column = 1)
+        
+        Label(master, text="Description", width = 15).grid(row=4,column=0)
+        self.CUE_DESC_ENTRY = Entry(master)
+        self.CUE_DESC_ENTRY["width"] = 15
+        self.CUE_DESC_ENTRY.grid(row = 5, column = 0)
+        
+        return self.CUE_ENTRY #initial focus
+        
+    def apply(self):
+        global g_ch_states_array
+        if(g_state == c_STATE_STANDBY):
+           l_entered_cue_num = min(round(abs(float(self.CUE_ENTRY.get())),1),999.9)
+           l_entered_up_time = min(round(abs(float(self.UP_TIME_ENTRY.get())),1), 99.9)
+           l_entered_down_time = min(round(abs(float(self.DOWN_TIME_ENTRY.get())),1), 99.9)
+           l_entered_cue_desc = str(self.CUE_DESC_ENTRY.get())
+           #reset all ch states to NO-Change
+           for i in range(0, c_max_dmx_ch):
+               g_ch_states_array[i] = c_CH_STATE_NO_CHANGE
+           app.set_ch_colors()
+           insert_cue(l_entered_cue_num, g_cur_dmx_output, l_entered_up_time, l_entered_down_time, l_entered_cue_desc)
+           app.update_displayed_cue_list()
+
+        
 ########################################################################
 ### END APPLICATION DEFINITION
 ########################################################################
@@ -660,7 +672,7 @@ class ChSetDialog(tkSimpleDialog.Dialog):
 ########################################################################
 def app_exit_graceful():
     global g_kill_timed_thread
-    global g_gui_access_lock
+    #global g_gui_access_lock
     global Timed_Thread_obj
     global app
     #set the TIMED kill variable, wait for it to end
@@ -694,7 +706,7 @@ class Timed_Thread(threading.Thread):
         global g_cur_cue_index
         global g_sec_into_transition
         global g_kill_timed_thread
-        global g_gui_access_lock
+        #global g_gui_access_lock
         
         timedif = 0
         
@@ -710,7 +722,7 @@ class Timed_Thread(threading.Thread):
                 for i in range(0, c_max_dmx_ch): #calculate each dmx value based on how far we are through the fade
                     if(g_ch_states_array[i] != c_CH_STATE_CAPTURED): #captured channels should not change
                         g_cur_dmx_output[i] = int(round(float(g_prev_dmx_output[i])*(1.0-(g_sec_into_transition/g_cue_list[g_cur_cue_index].UP_TIME))+float(g_cue_list[g_cur_cue_index].DMX_VALS[i])*(g_sec_into_transition/g_cue_list[g_cur_cue_index].UP_TIME)))
-
+                
                 #get the gui lock and update the displayed values               
                 while(g_gui_access_lock.acquire(blocking = 0) == False): #attempt to acquire the lock, spin on checking the kill_thread flag while waiting
                     if(g_kill_timed_thread == 1): #if the lock is acquired, it means the main app is trying to exit. This thread should exit too then.
@@ -743,10 +755,10 @@ class Timed_Thread(threading.Thread):
                     g_cur_dmx_output[i] = 0x11 #make sure we don't tx the start-of-frame char
             chars_to_tx = ''.join(chr(b) for b in g_cur_dmx_output)
             try:
-                g_ser_port.write('\x10') #write start byte
-                g_ser_port.write(chars_to_tx)
+               g_ser_port.write('\x10') #write start byte
+               g_ser_port.write(chars_to_tx)
             except:
-                print("Error while trying to write to serial port!!!")
+               print("Error while trying to write to serial port!!!")
             
 
             #calculate how well we did keeping time and correct for it
