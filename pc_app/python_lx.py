@@ -9,6 +9,7 @@
 ###
 ########################################################################
 ########################################################################
+
 from Tkinter import * #gui
 import tkSimpleDialog
 import tkFileDialog #file io dialogue boxes
@@ -392,7 +393,11 @@ class Application(Frame):
 
     def keypress_handler(self, event):
         input = event.char
-        if(input == "r"):
+        if(input == " "):
+            self.go_but_act()
+        elif(input == "b"):
+            self.back_but_act()
+        elif(input == "r"):
             RecCueDialog(root, title = "Record Cue")
         elif(input == "s"):
             ChSetDialog(root, title = "Set DMX Vals")
@@ -413,6 +418,9 @@ class Application(Frame):
         
         #keybindings
         root.bind("<Key>", self.keypress_handler)
+        root.bind("<Control-s>", save_show_file)
+        root.bind("<Control-o>", open_show_file)
+        root.bind("<Control-n>", new_show)
         
         #grab focus
         self.focus_set()
@@ -814,8 +822,12 @@ class Timed_Thread(threading.Thread):
             if(g_state == c_STATE_TRANSITION_FWD or g_state == c_STATE_TRANSITION_BKW):
                 g_dmx_vals_lock.acquire()
                 for i in range(0, c_max_dmx_ch): #calculate each dmx value based on how far we are through the fade
-                    if(g_ch_states_array[i] != c_CH_STATE_CAPTURED): #captured channels should not change
-                        g_cur_dmx_output[i] = int(round(float(g_prev_dmx_output[i])*(1.0-(g_sec_into_transition/g_cue_list[g_cur_cue_index].UP_TIME))+float(g_cue_list[g_cur_cue_index].DMX_VALS[i])*(g_sec_into_transition/g_cue_list[g_cur_cue_index].UP_TIME)))
+                    if(g_ch_states_array[i] == c_CH_STATE_INC): #captured channels should not change
+                        g_cur_dmx_output[i] = int(round(float(g_prev_dmx_output[i])*(1.0-min(1,(g_sec_into_transition/g_cue_list[g_cur_cue_index].UP_TIME)))+float(g_cue_list[g_cur_cue_index].DMX_VALS[i])*min(1,(g_sec_into_transition/g_cue_list[g_cur_cue_index].UP_TIME))))
+                    elif(g_ch_states_array[i] == c_CH_STATE_DEC): #captured channels should not change
+                        g_cur_dmx_output[i] = int(round(float(g_prev_dmx_output[i])*(1.0-min(1,(g_sec_into_transition/g_cue_list[g_cur_cue_index].DOWN_TIME)))+float(g_cue_list[g_cur_cue_index].DMX_VALS[i])*min(1,(g_sec_into_transition/g_cue_list[g_cur_cue_index].DOWN_TIME))))
+                    elif(g_ch_states_array[i] == c_CH_STATE_NO_CHANGE):
+                        g_cur_dmx_output[i] = int(round(g_cue_list[g_cur_cue_index].DMX_VALS[i])) #required in case the user is mashing go/back buttons so channels don't hang
                 g_dmx_vals_lock.release()
                 
                 #get the gui lock and update the displayed values               
@@ -826,28 +838,23 @@ class Timed_Thread(threading.Thread):
                 app.update_displayed_vals() #update the displayed vals on the screen
                 g_button_action_lock.release()
                 g_gui_access_lock.release() #we're done here, release the lock
-                 
+                           
+                
                 #calculate the next state and appropriate transition actions
-                if(g_sec_into_transition >= g_cue_list[g_cur_cue_index].UP_TIME-c_sec_per_frame/2): #catch if the fade is done, and end it
+                if(g_sec_into_transition >= max(g_cue_list[g_cur_cue_index].UP_TIME,g_cue_list[g_cur_cue_index].DOWN_TIME)-c_sec_per_frame/2): #catch if the fade is done, and end it
+                    g_button_action_lock.acquire()#atomic so seconds into transition & state dont get changed underneath us.
                     g_state = c_STATE_STANDBY
                     g_sec_into_transition = 0
-                    g_dmx_vals_lock.acquire()
+                    g_button_action_lock.release()
+                    g_dmx_vals_lock.acquire()  
                     for i in range(0,c_max_dmx_ch): #account for discrete timestep issues by ensuring the last loop in transition sets the outputs right
                         if(g_ch_states_array[i] != c_CH_STATE_CAPTURED):
                             g_cur_dmx_output[i] = int(round(g_cue_list[g_cur_cue_index].DMX_VALS[i]))
-                    g_dmx_vals_lock.release()
+                    g_dmx_vals_lock.release()  #atomic so seconds into transition doesn't get changed underneath us.
                 else:
+                    g_button_action_lock.acquire()#atomic so seconds into transition doesn't get changed underneath us.
                     g_sec_into_transition = g_sec_into_transition + c_sec_per_frame #update how far we are through the fade
-          
-
-            #if we're in standby, we should read the gui's values (user editable)
-            #elif(g_state == c_STATE_STANDBY):
-                #while(g_gui_access_lock.acquire(blocking = 0)== False): #attempt to acquire the lock, spin on checking the kill_thread flag while waiting
-                #    if(g_kill_timed_thread == 1): #if the lock is acquired, it means the main app is trying to exit. This thread should exit too then.
-                #        return
-                ##app.read_gui_input() 
-                #g_gui_access_lock.release() #we're done here, give up the lock
-       
+                    g_button_action_lock.release()
 
             #tx current dmx frame
             for i in range(0, c_max_dmx_ch):
