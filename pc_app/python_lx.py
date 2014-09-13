@@ -951,7 +951,11 @@ root.protocol("WM_DELETE_WINDOW", app_exit_graceful) #set custom close handle
 
 #initialize DMX Hardware
 try:
-    g_ser_port = serial.Serial(6, 115200)# Serial port COM7 on windows. We need a dynamic way of selecting...
+    if(_platform == "linux" or _platform == "linux2"):
+        g_ser_port = serial.Serial('/dev/ttyACM0', 115200)# Serial port COM7 on windows. We need a dynamic way of selecting...
+    else:
+         g_ser_port = serial.Serial(6, 115200)# Serial port COM7 on windows. We need a dynamic way of selecting...
+        
 except:
     print("Error opening serial port to DMX TX Module, is it plugged in and unused?")
     sys.exit(-1)
